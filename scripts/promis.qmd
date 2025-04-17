@@ -1,0 +1,29 @@
+---
+title: "Long COVID - PROMIS"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format: 
+  html:
+    toc: true
+    embed-resources: true
+
+execute: 
+  echo: false
+---
+
+```{r, message=FALSE, warning=FALSE}
+#pull in SMS dates report from HSQ SMS Survey report
+.sms_token <- Sys.getenv("LC_patient")
+
+url <- "https://redcap.ucdenver.edu/api/"
+
+formData <- list(token = .sms_token, content = "report", format = "csv",
+                 report_id = "148994", csvDelimiter = "", rawOrLabel = "label",
+                 rawOrLabelHeaders = "raw", exportCheckboxLabel = "false",
+                 returnFormat = "csv")
+
+response <- httr::POST(url, body = formData, encode = "form")
+
+full_data <- httr::content(response)
+```
