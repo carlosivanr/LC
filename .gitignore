@@ -1,0 +1,11 @@
+.Rprofile
+proposal_sap/AHRQ_Long COVID proposal only.docx
+proposal_sap/Long COVID SAP jy080624_CR.doc
+proposal_sap/Long COVID SAP jy080624.doc
+renv/activate.R
+renv/settings.json
+scripts/participant_tracking_report.html
+
+
+*.docx
+*.html
