@@ -1,0 +1,593 @@
+---
+title: "Patient Survey Accrual Report"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format: 
+  html:
+    toc: true
+    embed-resources: true
+
+execute: 
+  echo: false
+---
+
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
+# AHRQ Long COVID - participant accrual report
+# The purpose of this report is to monitor patient enrollment into the study
+#
+
+# Notes: 
+# Elena asked about conversion rates
+# How to define someone who's been screened and someone who has been enrolled?
+# Use whether or not the last instrument is marked as complete. See notes
+# below.
+
+# Elena also asked about displaying data by Timepoint, but probably doesn't make
+# sense until we have T2 data available
+# *** Settled on breaking apart by MDC and PCC
+# /////////////////////////////////////////////////////////////////////////////
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+library(dfmtbx)
+
+pacman::p_load(
+  tidyverse,
+  gtsummary
+)
+```
+
+```{r}
+#| echo: false
+# Participant accrual report draft
+# Project ID = 33298
+# Report ID = 148994
+```
+
+```{r}
+# Variables to pull
+# Upload to RedCap, instead of egnyte, to have the report always available
+# Or save as RMD and see if it can save that way.
+# promis_record_id
+# demographic variables
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Pull report 148994 as labeled data
+# Corresponds to patient_enrollment report in REDCap
+data <- pull_redcap_report(Sys.getenv("LC_patient"), "148994", "label", "raw")
+
+# Capture the column names
+names_data <- names(data)
+
+# Drop the demographic select all the apply questions
+data %<>%
+  select(
+    -starts_with("patient_race"),
+    -starts_with("patient_insurance"),
+    -starts_with("patient_employ"),
+    -redcap_event_name # use raw instead of label to preserve prior functions
+)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Pull report 148994 as raw data for the demographic variables only
+demographics <- 
+  pull_redcap_report(Sys.getenv("LC_patient"), "148994", "raw", "raw") %>%
+  select(
+    redcap_event_name,
+    starts_with("patient_race"),
+    starts_with("patient_insurance"),
+    starts_with("patient_employ")
+  )
+```
+
+```{r}
+# Merge the primary data set with the demographic data set
+data <- bind_cols(data, demographics)
+
+# Re-order the columns to preserve the order in the the data frame data
+data %<>%
+  select(all_of(names_data))
+
+# Rename promis_record_id to record_id (easier to type)
+data %<>%
+  rename(record_id = promis_record_id)
+
+# Clear workspace variables
+rm(demographics, names_data)
+```
+
+```{r}
+# Remove duplicated rows and test records
+# - record_id 10 is the incomplete row of record_id 9
+# - record_ids 14-16 are test records
+data %<>%
+  filter(!record_id %in% 
+  c(10, 
+    14,
+    15,
+    16,
+    18))
+```
+
+```{r}
+# Check if there are any duplicates
+duplicates <- data %>%
+  filter(redcap_event_name == "patient_preenrollm_arm_1") %>%
+  group_by(name) %>%
+  count() %>%
+  ungroup() %>%
+  filter(n > 1) %>%
+  nrow()
+
+if (duplicates != 0) {
+  stop("Possible duplicated name. Check data")
+}
+```
+
+```{r}
+# Create a site variable by coalescing mdc_name and pcc_name before filling
+# values
+data %<>%
+  mutate(site_name = coalesce(mdc_name, pcc_name))
+
+# Fill in empty values for pcc_or_mdc, mdc_name, and pcc_name columns
+data %<>%
+  group_by(record_id) %>%
+  fill(pcc_or_mdc, .direction = c("updown")) %>%
+  fill(site_name, .direction = c("updown")) %>%
+  ungroup()
+
+# Rename pcc_or_mdc to site_type for readability, and make unknown explicit
+data %<>%
+  rename(site_type = pcc_or_mdc) %>%
+  mutate(site_type = ifelse(is.na(site_type), "Unknown", site_type)) %>%
+  mutate(site_name = ifelse(is.na(site_name), "Unknown", site_name))  
+```
+
+<!-- Table of pre-enrolled patients version 2 -->
+```{r}
+# Check if the consent name is missing and patient_consent_form_complete, which
+# would indicate that the logic E. Broadus and B. Sophie proposed is flawed for
+# reporting purpose
+mismatched_consent_values <- 
+  data %>% 
+  filter(is.na(consent_name) & patient_consent_form_complete == "Complete") %>% 
+  nrow()
+
+# Check
+if (mismatched_consent_values > 0) {
+  stop("Logic error in counting consented vs consent form complete. Revise code.")
+}
+```
+
+```{r}
+# Create a sub data frame for making the primary table of screened & enrolled,
+# and consented patients. The denominator is the number of unique record_ids 
+# excluding the test and duplicated records. 
+tab_data <- data %>%
+  select(record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete) %>%
+  group_by(record_id) %>%
+  fill(enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, .direction = "updown") %>%
+  slice_head() %>%
+  ungroup() %>%
+  mutate(across(enrollstatus:healthrelated_social_needs_complete, ~ ifelse(grepl("complete", .x, ignore.case = TRUE), 1,0)))
+```
+
+# Screened and consented patients
+- Pre-enrolled patients: Number of unique record ids excluding test and duplicated records
+- Screened and enrolled: Number of unique record ids where enrollstatus is complete
+- Consented: Number of unique record ids where patient_consent_form is complete
+```{r}
+tab_data %>%
+  select(-record_id, -healthrelated_social_needs_complete) %>%
+  tbl_summary(
+    label = list(
+      enrollstatus ~ "Screened and enrolled",
+      patient_consent_form_complete ~ "Consented")
+  ) %>%
+  modify_header(label = "**Pre-enrolled patients**")
+```
+
+<!-- Table of pre-enrolled patients version 1 -->
+```{r}
+#| eval: false
+# Table of overall number of patients pre-enrolled as denominator and
+# 1. number of screened as numerator
+# 2. number of consented and T1 as numerator
+data %>%
+  mutate(obs = 1) %>%
+  select(record_id, redcap_event_name, obs) %>%
+  group_by(record_id) %>%
+  pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
+  ungroup() %>%
+  mutate(
+    across(
+      patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
+      ~ ifelse(is.na(.x), 0, .x))) %>%
+  select(-record_id, -patient_preenrollm_arm_1) %>%
+  tbl_summary(
+    value = list(screening_and_enro_arm_1 ~ "1"),
+    label = list(
+      screening_and_enro_arm_1 ~ "Screened and enrolled",
+      consent_and_t1_sur_arm_1 ~ "Consent & T1")
+  ) %>%
+  modify_header(label = "**Pre-enrolled patients**")
+```
+
+# Consented patients by Site Type and Site Name
+```{r}
+# Denominator of those tha have consented
+data %>%
+  group_by(record_id) %>%
+  slice_head() %>%
+  ungroup() %>%
+  filter(record_id %in% (tab_data %>% filter(patient_consent_form_complete == 1) %>% pull(record_id))) %>%
+  select(site_type, site_name) %>%
+  tbl_summary(
+    label = list(
+      site_type ~ "Site Type",
+      site_name ~ "Site Name")
+  )
+```
+
+```{r}
+#| eval: false
+# Values by pcc or mdc
+data %>%
+  mutate(obs = 1) %>%
+  select(record_id, redcap_event_name, site_type, obs) %>%
+  group_by(record_id) %>%
+  pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
+  ungroup() %>%
+  mutate(
+    across(
+      patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
+      ~ ifelse(is.na(.x), 0, .x))) %>%
+  select(-record_id, -patient_preenrollm_arm_1,) %>%
+  tbl_summary(
+    by = site_type,
+    value = list(screening_and_enro_arm_1 ~ "1"),
+    label = list(
+      screening_and_enro_arm_1 ~ "Screened",
+      consent_and_t1_sur_arm_1 ~ "Consent")
+  ) %>%
+  modify_header(label = "**Pre-enrolled patients**")
+```
+
+```{r}
+#| eval: false
+# Values by site name
+data %>%
+  mutate(obs = 1) %>%
+  select(record_id, redcap_event_name, site_name, obs) %>%
+  group_by(record_id) %>%
+  pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
+  ungroup() %>%
+  mutate(
+    across(
+      patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
+      ~ ifelse(is.na(.x), 0, .x))) %>%
+  select(-record_id, -patient_preenrollm_arm_1,) %>%
+  tbl_summary(
+    by = site_name,
+    value = list(screening_and_enro_arm_1 ~ "1"),
+    label = list(
+      screening_and_enro_arm_1 ~ "Screened",
+      consent_and_t1_sur_arm_1 ~ "Consent & T1")
+  ) %>%
+  modify_header(label = "**Pre-enrolled patients**")
+```
+
+```{r}
+# MDC only
+# data %>%
+#   filter(pcc_or_mdc == "MDC") %>%
+#   mutate(obs = 1) %>%
+#   select(record_id, redcap_event_name, obs, redcap_event_name) %>%
+#   group_by(record_id) %>%
+#   pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
+#   ungroup() %>%
+#   mutate(
+#     across(
+#       patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
+#       ~ ifelse(is.na(.x), 0, .x))) %>%
+#   select(-record_id, -patient_preenrollm_arm_1, -screening_and_enro_arm_1) %>%
+#   tbl_summary(
+#     label = list(
+#       # screening_and_enro_arm_1 ~ "Screened",
+#       consent_and_t1_sur_arm_1 ~ "Consent & T1")
+#   ) %>%
+#   modify_header(label = "**MDC Pre-enrolled patients**")
+```
+
+```{r}
+# PCC only
+# data %>%
+#   filter(pcc_or_mdc == "PCC") %>%
+#   mutate(obs = 1) %>%
+#   select(record_id, redcap_event_name, obs, redcap_event_name) %>%
+#   group_by(record_id) %>%
+#   pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
+#   ungroup() %>%
+#   mutate(
+#     across(
+#       patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
+#       ~ ifelse(is.na(.x), 0, .x))) %>%
+#   select(-record_id, -patient_preenrollm_arm_1, -screening_and_enro_arm_1) %>%
+#   tbl_summary(
+#     label = list(
+#       # screening_and_enro_arm_1 ~ "Screened",
+#       consent_and_t1_sur_arm_1 ~ "Consent & T1")
+#   ) %>%
+#   modify_header(label = "**PCC Pre-enrolled patients**")
+```
+
+# Survey completion rates for T1 Overall
+- denominator consists of unique records where patient_consent_form is complete 
+```{r}
+# Denominator is a complete pre-enrollment form
+# T1 Numerator is a complete health related social needs form at consent_and_t1_sur_arm_1
+# T2 Numerator is a complete disability form at t2_survey_arm_1
+# T3 Numerator is a complete Experiences with care t3_survey_arm_1
+# T4 Numerator is a complete Experiences with care t4_survey_arm_1
+```
+
+```{r}
+# denominator
+denominator_ids <- 
+  data %>%
+  filter(patient_enrollment_form_complete == "Complete") %>%
+  pull(record_id)
+
+# Create a table using the record_ids in denominator ids which are the
+# participants that have a complete patient_enrollment_form this will give
+# the proportion of individuals who have consented and submitted a T1 
+# survey out of those recruited from the clinics to undergo screening.
+data %>%
+  filter(
+    record_id %in% denominator_ids,
+    redcap_event_name == "consent_and_t1_sur_arm_1"
+  ) %>%
+  select(healthrelated_social_needs_complete) %>%
+  tbl_summary(
+    label = list(
+      "healthrelated_social_needs_complete" ~ "Health Related Social Needs Form"
+    )
+    )
+```
+
+## Survey completion rates for T1 by Site Type
+```{r}
+data %>%
+  filter(
+    record_id %in% denominator_ids,
+    redcap_event_name == "consent_and_t1_sur_arm_1"
+  ) %>%
+  select(healthrelated_social_needs_complete, site_type) %>%
+  tbl_summary(
+    by = site_type,
+    label = list(
+      "healthrelated_social_needs_complete" ~ "Health Related Social Needs Form"
+    )
+    ) 
+```
+
+<!-- # Patient Demographics -->
+```{r}
+# Manually inspect gender_other as free text
+# Manually inspect patient_sexorient_descr as free text
+```
+
+```{r}
+# Make a backup
+data_full <- data
+```
+
+```{r}
+# Patient age gender and sexualt orientation
+data <- 
+  data %>%
+  filter(redcap_event_name == "consent_and_t1_sur_arm_1") %>%
+  # mutate(patient_age = sample(18:75, n(), replace = TRUE)) %>% # Fabricate data
+  mutate(age_group = case_when(
+                               patient_age >= 18 & patient_age < 35 ~ "18-34",
+                               patient_age >= 35 & patient_age < 65 ~ "35-64",
+                               patient_age >= 65 ~ "65+",
+                               TRUE ~ NA_character_
+                               ),
+         age_group = factor(age_group, levels = c("18-34", "35-64", "65+"), ordered = TRUE)) #%>%
+  # mutate(patient_gender = sample(1:7, n(), replace = TRUE)) %>% # Fabricate data
+  # mutate(patient_gender = case_match(patient_gender, 
+  #                                    1 ~ "Male",
+  #                                    2 ~ "Female",
+  #                                    3 ~ "TransMale",
+  #                                    4 ~ "TransFeml",
+  #                                    5 ~ "Non-Bin",
+  #                                    6 ~ "Other",
+  #                                    7 ~ "PrefNoAnswr")) %>%
+  # # mutate(patient_sexorient = sample(1:8, n(), replace = TRUE)) %>% # Fabricate data                                    
+  # mutate(patient_sexorient = case_match(patient_sexorient, 
+  #                                     1 ~ "Asexl",
+  #                                     2 ~ "Bisexl",
+  #                                     3 ~ "GayLesbn",
+  #                                     4 ~ "Hetero",
+  #                                     5 ~ "Pansexl",
+  #                                     6 ~ "Queer",
+  #                                     7 ~ "SelfDesc",
+  #                                     8 ~ "PrefNoAnswr"))
+```
+
+## Age, gender, sexual orientation
+```{r}
+# Patient age, gender and sexual orientation
+data %>%
+  select(age_group, patient_gender, patient_sexorient) %>%
+  tbl_summary(
+    # statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    label = list(
+      age_group ~ "Age group",
+      patient_gender ~ "Gender",
+      patient_sexorient ~ "Sexual orientation"
+    )
+    )
+```
+
+## Race & ethnicity
+```{r}
+# Patient race and ethnicity
+data %>%
+  select(patient_race___1:patient_race___7, patient_ethn) %>%
+  mutate(across(patient_race___1:patient_race___7, ~ factor(.x, levels = c(0, 1)))) %>%
+  # Either columns are renamed, or the labels are set in tbl_summary()
+  # rename("White" = patient_race___5,
+  #        "Black" = patient_race___1,
+  #        "Asian" = patient_race___3,
+  #        "AA/AN" = patient_race___2,
+  #        "Native Hawaiian/Other Pacific Islander" = patient_race___4,
+  #        "Other" = patient_race___6,
+  #        "PrefNoAnswr" = patient_race___7) %>%
+  tbl_summary(
+    label = list(
+      "patient_race___1" ~ "African American or Black",
+      "patient_race___2" ~ "American Indian/Alaska Native.",
+      "patient_race___3" ~ "Asian",
+      "patient_race___4" ~ "Native Hawaiian/Other Pacific Islander",
+      "patient_race___5" ~ "White",
+      "patient_race___6" ~ "Other",
+      "patient_race___7" ~ "Prefer not to answer",
+      "patient_ethn" ~ "Hispanic"),
+    value = list(patient_race___1 ~ "1",
+                 patient_race___2 ~ "1",
+                 patient_race___3 ~ "1",
+                 patient_race___4 ~ "1",
+                 patient_race___5 ~ "1",
+                 patient_race___6 ~ "1",
+                 patient_race___7 ~ "1")
+  )
+```
+
+## Patient preferred language
+```{r}
+# Patient preferred language
+data %>%
+  # mutate(across(patient_pref_lang, ~ sample(1:4, n(), replace = TRUE))) %>% # Fabricate data
+  # mutate(patient_pref_lang = case_match(patient_pref_lang, 
+  #                                 1 ~ "English",
+  #                                 2 ~ "Spanish",
+  #                                 3 ~ "Other",
+  #                                 4 ~ "PrefNoAnswr")) %>%
+  select(patient_pref_lang) %>%
+  tbl_summary(
+    label = list("patient_pref_lang" ~ "Patient preferred lang.")
+  )
+```
+
+## Patient insurance
+```{r}
+# Patient race and ethnicity
+data %>%
+  select(patient_insurance___1:patient_insurance___10) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      "patient_insurance___1" ~ "State market place",
+      "patient_insurance___2" ~ "Employee provided",
+      "patient_insurance___3" ~ "Medicaid",
+      "patient_insurance___4" ~ "Medicare - Original Medicare",
+      "patient_insurance___5" ~ "Medicare - Advantage Plan",
+      "patient_insurance___6" ~ "Worker's Comp",
+      "patient_insurance___7" ~ "Other",
+      "patient_insurance___8" ~ "Self-pay",
+      "patient_insurance___9" ~ "Uninsured",
+      "patient_insurance___10" ~ "Prefer not to answer",
+      "patient_insurance___11" ~ "Medigap",
+      "patient_insurance___12" ~ "Medicare Part D"
+    ),
+    value = everything() ~ "1"
+  )
+```
+
+## Patient education level
+```{r}
+# Patient education level
+data %>%
+  # mutate(across(patient_school, ~ sample(1:9, n(), replace = TRUE))) %>% # Fabricate data
+  # mutate(patient_school = case_match(patient_school, 
+  #                                 1 ~ "No schooling completed",
+  #                                 2 ~ "Nursery school to 8th grade",
+  #                                 3 ~ "Some high school, no diploma",
+  #                                 4 ~ "	High school graduate, diploma or the equivalent (for example: GED)",
+  #                                 5 ~ "Some college credit, no degree",
+  #                                 6 ~ "Associate degree",
+  #                                 7 ~ "Bachelor's degree",
+  #                                 8 ~ "Master's degree",
+  #                                 9 ~ "Professional or Doctorate degree"
+  #                                 )) %>%
+  select(patient_school) %>%
+  tbl_summary(
+    label = list(patient_school ~ "Patient education level")
+  )
+```
+
+## Patient marital status
+```{r}
+data %>%
+  # mutate(across(patient_marital, ~ sample(1:6, n(), replace = TRUE))) %>% # Fabricate data
+  # mutate(patient_marital = case_match(patient_marital, 
+  #                                 1 ~ "Single",
+  #                                 2 ~ "In a relationship",
+  #                                 3 ~ "Married",
+  #                                 4 ~ "Divorced/Separated",
+  #                                 5 ~ "Widowed",
+  #                                 6 ~ "Other (please describe)"
+  #                                 )) %>%
+  select(patient_marital) %>%
+  tbl_summary(
+    label = list(patient_marital ~ "Patient marital status")
+  )
+```
+
+## Patient employment status pre- long COVID
+```{r}
+data %>%
+  select(patient_employ___1:patient_employ___7) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      patient_employ___1 ~ "Employed Full-time",
+      patient_employ___2 ~ "Employed Part-time",
+      patient_employ___3 ~ "Unemployed",
+      patient_employ___4 ~ "Disabled",
+      patient_employ___5 ~ "Retired",
+      patient_employ___6 ~ "Student",
+      patient_employ___7 ~ "Other"
+    ),
+    value = everything() ~ "1"
+  )
+```
+
+## Patient employment status current
+```{r}
+data %>%
+  mutate(across(patient_employ_2___1:patient_employ_2___7, ~ sample(0:1, n(), replace = TRUE))) %>% # Fabricate data
+  select(patient_employ_2___1:patient_employ_2___7) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      patient_employ_2___1 ~ "Employed Full-time",
+      patient_employ_2___2 ~ "Employed Part-time",
+      patient_employ_2___3 ~ "Unemployed",
+      patient_employ_2___4 ~ "Disabled",
+      patient_employ_2___5 ~ "Retired",
+      patient_employ_2___6 ~ "Student",
+      patient_employ_2___7 ~ "Other"
+      ),
+    value = everything() ~ "1"
+  )
+```
