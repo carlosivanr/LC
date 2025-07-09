@@ -26,35 +26,19 @@ execute:
 # below.
 
 # Elena also asked about displaying data by Timepoint, but probably doesn't make
-# sense for demographic data and she meant for the outcome measures.
+# sense until we have T2 data available
 # *** Settled on breaking apart by MDC and PCC
 # /////////////////////////////////////////////////////////////////////////////
 ```
 
-
 ```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+
 pacman::p_load(
   tidyverse,
   gtsummary
 )
-library(magrittr, include = "%<>%")
 ```
-
-```{r}
-# Get the data from a given report as a function of the report id and the type
-get_report_data <- function(x, type) {
-  .sms_token <- Sys.getenv("LC_patient")
-  url <- "https://redcap.ucdenver.edu/api/"
-  formData <- list(token = .sms_token, content = "report", format = "csv",
-                 report_id = x, csvDelimiter = "", rawOrLabel = type,
-                 rawOrLabelHeaders = "raw", exportCheckboxLabel = "false",
-                 returnFormat = "csv")
-  response <- httr::POST(url, body = formData, encode = "form")
-  temp <- httr::content(response)
-  return(temp)
-}
-```
-
 
 ```{r}
 #| echo: false
@@ -64,11 +48,34 @@ get_report_data <- function(x, type) {
 ```
 
 ```{r}
+# Get the data from a given report as a function of the report id and the type
+get_report_data <- function(x, type) {
+  .sms_token <- Sys.getenv("LC_patient")
+  url <- "https://redcap.ucdenver.edu/api/"
+  formData <- list(
+    token = .sms_token, 
+    content = "report", 
+    format = "csv",
+    report_id = x, 
+    csvDelimiter = "", 
+    rawOrLabel = type,
+    rawOrLabelHeaders = "raw", 
+    exportCheckboxLabel = "false",
+    returnFormat = "csv")
+  response <- httr::POST(url, body = formData, encode = "form")
+  temp <- httr::content(response, show_col_types = FALSE)
+  return(temp)
+}
+```
+
+
+```{r}
 # Variables to pull
 # Upload to RedCap, instead of egnyte, to have the report always available
 # Or save as RMD and see if it can save that way.
+# promis_record_id
+# demographic variables
 ```
-
 
 ```{r, message=FALSE, warning=FALSE}
 # Pull report 148994 as labeled data
@@ -103,8 +110,7 @@ demographics <- get_report_data("148994", "raw") %>%
 # Merge the primary data set with the demographic data set
 data <- bind_cols(data, demographics)
 
-
-# Re-order the columns
+# Re-order the columns to preserve the order in the the data frame data
 data %<>%
   select(all_of(names_data))
 
@@ -112,26 +118,22 @@ data %<>%
 data %<>%
   rename(record_id = promis_record_id)
 
-# Clean workspace
+# Clear workspace variables
 rm(demographics, names_data)
 ```
 
-
 ```{r}
-# Remove duplicated rows
-
-# record_id 10 is the incomplete row of record_id 9
-# record_ids 14-16 are test records
+# Remove duplicated rows and test records
+# - record_id 10 is the incomplete row of record_id 9
+# - record_ids 14-16 are test records
 data %<>%
   filter(!record_id %in% 
-  c(
-    10, 
-    14, 
-    15, 
-    16)
-  )
+  c(10, 
+    14,
+    15,
+    16,
+    18))
 ```
-
 
 ```{r}
 # Check if there are any duplicates
@@ -142,8 +144,6 @@ duplicates <- data %>%
   ungroup() %>%
   filter(n > 1) %>%
   nrow()
-
-
 
 if (duplicates != 0) {
   stop("Possible duplicated name. Check data")
@@ -170,16 +170,53 @@ data %<>%
   mutate(site_name = ifelse(is.na(site_name), "Unknown", site_name))  
 ```
 
+<!-- Table of pre-enrolled patients version 2 -->
 ```{r}
+# Check if the consent name is missing and patient_consent_form_complete, which
+# would indicate that the logic E. Broadus and B. Sophie proposed is flawed for
+# reporting purpose
+mismatched_consent_values <- 
+  data %>% 
+  filter(is.na(consent_name) & patient_consent_form_complete == "Complete") %>% 
+  nrow()
 
+# Check
+if (mismatched_consent_values > 0) {
+  stop("Logic error in counting consented vs consent form complete. Revise code.")
+}
 ```
 
-<!-- Table of pre-enrolled patients  -->
-# Screened and consented T1 patients
-- Pre-enrolled patients: Number of unique record ids in all patient_preenroll_arm_1 rows
-- Screened: Number of unique record ids in all screening_and_enro_arm1 rows
-- Consent: Number of unique record ids in all consent_and_t1_sur_arm_1 rows
 ```{r}
+# Create a sub data frame for making the primary table of screened & enrolled,
+# and consented patients. The denominator is the number of unique record_ids 
+# excluding the test and duplicated records. 
+tab_data <- data %>%
+  select(record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete) %>%
+  group_by(record_id) %>%
+  fill(enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, .direction = "updown") %>%
+  slice_head() %>%
+  ungroup() %>%
+  mutate(across(enrollstatus:healthrelated_social_needs_complete, ~ ifelse(grepl("complete", .x, ignore.case = TRUE), 1,0)))
+```
+
+# Screened and consented patients
+- Pre-enrolled patients: Number of unique record ids excluding test and duplicated records
+- Screened and enrolled: Number of unique record ids where enrollstatus is complete
+- Consented: Number of unique record ids where patient_consent_form is complete
+```{r}
+tab_data %>%
+  select(-record_id, -healthrelated_social_needs_complete) %>%
+  tbl_summary(
+    label = list(
+      enrollstatus ~ "Screened and enrolled",
+      patient_consent_form_complete ~ "Consented")
+  ) %>%
+  modify_header(label = "**Pre-enrolled patients**")
+```
+
+<!-- Table of pre-enrolled patients version 1 -->
+```{r}
+#| eval: false
 # Table of overall number of patients pre-enrolled as denominator and
 # 1. number of screened as numerator
 # 2. number of consented and T1 as numerator
@@ -197,14 +234,30 @@ data %>%
   tbl_summary(
     value = list(screening_and_enro_arm_1 ~ "1"),
     label = list(
-      screening_and_enro_arm_1 ~ "Screened",
+      screening_and_enro_arm_1 ~ "Screened and enrolled",
       consent_and_t1_sur_arm_1 ~ "Consent & T1")
   ) %>%
   modify_header(label = "**Pre-enrolled patients**")
 ```
 
-# Screened and consented T1 patients by MDC or PCC
+# Consented patients by Site Type and Site Name
 ```{r}
+# Denominator of those tha have consented
+data %>%
+  group_by(record_id) %>%
+  slice_head() %>%
+  ungroup() %>%
+  filter(record_id %in% (tab_data %>% filter(patient_consent_form_complete == 1) %>% pull(record_id))) %>%
+  select(site_type, site_name) %>%
+  tbl_summary(
+    label = list(
+      site_type ~ "Site Type",
+      site_name ~ "Site Name")
+  )
+```
+
+```{r}
+#| eval: false
 # Values by pcc or mdc
 data %>%
   mutate(obs = 1) %>%
@@ -222,12 +275,13 @@ data %>%
     value = list(screening_and_enro_arm_1 ~ "1"),
     label = list(
       screening_and_enro_arm_1 ~ "Screened",
-      consent_and_t1_sur_arm_1 ~ "Consent & T1")
+      consent_and_t1_sur_arm_1 ~ "Consent")
   ) %>%
   modify_header(label = "**Pre-enrolled patients**")
 ```
 
 ```{r}
+#| eval: false
 # Values by site name
 data %>%
   mutate(obs = 1) %>%
@@ -294,8 +348,8 @@ data %>%
 #   modify_header(label = "**PCC Pre-enrolled patients**")
 ```
 
-# Conversion rates for T1
-- denominator consists of records where the patient_enrollment_form_complete field = 2
+# Conversion rates for T1 Overall
+- denominator consists of unique records where patient_consent_form is complete 
 ```{r}
 # Denominator is a complete pre-enrollment form
 # T1 Numerator is a complete health related social needs form at consent_and_t1_sur_arm_1
@@ -325,10 +379,10 @@ data %>%
     label = list(
       "healthrelated_social_needs_complete" ~ "Health Related Social Needs Form"
     )
-    ) %>%
-  modify_header(label = "**Complete pre-enrollment form**")
+    )
 ```
 
+## Conversion rates for T1 by Site Type
 ```{r}
 data %>%
   filter(
@@ -341,76 +395,21 @@ data %>%
     label = list(
       "healthrelated_social_needs_complete" ~ "Health Related Social Needs Form"
     )
-    ) %>%
-  modify_header(label = "**Complete pre-enrollment form**")
-```
-
-
-```{r}
-# Temporary for drafting tables shell of reports
-# does it make sense to break out the data by timepoint, since these are demographics?
-# data <- full_data %>%
-#   # group_by(record_id) %>%
-#   # fill(pcc_or_mdc, mdc_name .direction = "downup")
-#   filter(redcap_event_name == "Screening and Enrollment" )
-```
-
-<!-- # Conversion rate enrolled/screened -->
-```{r}
-# # How to count the number of people screened?
-# # Patient preenrollment contact information complete???
-
-# # How to count the number of people enrolled
-# # Count the number of instruments completed???
-
-
-# # Make a fabricated data frame
-# conversion_rate <- 
-#   data.frame(enrolled =  sample(0:1, full_data %>% nrow(), replace = TRUE))
-
-# # Make a table of the conversion rate
-# conversion_rate %>%
-#   tbl_summary()
-```
-
-<!-- # Screening and Enrollment by Clinic -->
-<!-- ## PCC or MDC -->
-```{r}
-# data %>%
-#   select(pcc_or_mdc) %>%
-#   tbl_summary()
-```
-
-<!-- ## MDC Name -->
-```{r}
-# data %>%
-#   filter(pcc_or_mdc == "MDC") %>%
-#   select(mdc_name) %>%
-#   tbl_summary()
-```
-
-<!-- ## PCC Name -->
-```{r}
-# data %>%
-#   filter(pcc_or_mdc == "PCC") %>%
-#   select(pcc_name) %>%
-#   tbl_summary()
+    ) 
 ```
 
 <!-- # Patient Demographics -->
-
 ```{r}
 # Manually inspect gender_other as free text
 # Manually inspect patient_sexorient_descr as free text
-
 ```
 
 ```{r}
+# Make a backup
 data_full <- data
 ```
 
 ```{r}
-# Fabricate data for the purposes of making table shells
 # Patient age gender and sexualt orientation
 data <- 
   data %>%
@@ -442,8 +441,6 @@ data <-
   #                                     6 ~ "Queer",
   #                                     7 ~ "SelfDesc",
   #                                     8 ~ "PrefNoAnswr"))
-
-
 ```
 
 ## Age, gender, sexual orientation
@@ -451,23 +448,17 @@ data <-
 # Patient age, gender and sexual orientation
 data %>%
   select(age_group, patient_gender, patient_sexorient) %>%
-  tbl_summary(statistic = list(all_continuous() ~ "{mean} ({sd})"))
+  tbl_summary(
+    # statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    label = list(
+      age_group ~ "Age group",
+      patient_gender ~ "Gender",
+      patient_sexorient ~ "Sexual orientation"
+    )
+    )
 ```
 
 ## Race & ethnicity
-```{r}
-# Patient race and ethnicity
-# data <- 
-# data %>%
-#   # mutate(patient_ethn = sample(1:4, n(), replace = TRUE)) %>%
-#   mutate(patient_ethn = case_match(patient_ethn, 
-#                                       1 ~ "HispLat",
-#                                       2 ~ "Not-HispLat",
-#                                       3 ~ "Other",
-#                                       4 ~ "PrefNoAnswr"))
-
-```
-
 ```{r}
 # Patient race and ethnicity
 data %>%
@@ -515,7 +506,6 @@ data %>%
   tbl_summary(
     label = list("patient_pref_lang" ~ "Patient preferred lang.")
   )
-
 ```
 
 ## Patient insurance
@@ -542,7 +532,6 @@ data %>%
     value = everything() ~ "1"
   )
 ```
-
 
 ## Patient education level
 ```{r}
@@ -621,18 +610,4 @@ data %>%
       ),
     value = everything() ~ "1"
   )
-```
-
-<!-- ## Patient demographics complete -->
-```{r}
-# data %>%
-#   mutate(across(patient_demographics_complete, ~ sample(0:2, n(), replace = TRUE))) %>% # Fabricate data
-#   mutate(patient_demographics_complete = case_match(patient_demographics_complete, 
-#                                 0 ~ "Incomplete",
-#                                 1 ~ "Unverified",
-#                                 2 ~ "Complete"
-#                                 )) %>%
-#   select(patient_demographics_complete) %>%
-#   # Either columns are renamed, or the labels are set in tbl_summary()
-#   tbl_summary()
 ```
