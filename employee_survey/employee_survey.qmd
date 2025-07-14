@@ -1,0 +1,503 @@
+---
+title: "Employee Survey (draft)"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format: 
+  html:
+    toc: true
+    embed-resources: true
+
+execute: 
+  echo: false
+---
+
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
+# AHRQ Long COVID - employee survey
+# /////////////////////////////////////////////////////////////////////////////
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+library(dfmtbx)
+
+pacman::p_load(
+  tidyverse,
+  gtsummary
+)
+```
+
+```{r, message=FALSE, warning=FALSE}
+data <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "raw")
+labels <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "label")
+```
+
+```{r}
+# Create a field-name to label-name dictionary given two data frames in the 
+# workspace named labels and data, where data is the report pulled from Redcap
+# in raw format and labels is the same report but with the label format.
+create_name_dict <- function(){
+  # create a dictionary
+  dict <- data.frame( 
+  field_name = names(data), 
+  label = names(labels))
+
+  return(dict)
+}
+```
+
+```{r}
+# FUNCTION TO CONVERT CHECKED/UNCHECKED COLUMNS TO 1/0
+check_to_binary <- function (df, cols = everything(), val_to_1 = "Checked") {
+  df %>%
+    mutate(across({{cols}}, ~ map_int(.x, ~ ifelse(.x == val_to_1, 1, 0))))
+}
+```
+
+```{r}
+# Function that converts a raw header to a label header, requires th dict
+# data frame to be present in the workspace
+raw_to_label_header <-  function(df) {
+
+  temp <- df
+
+  current_names <- names(df)
+  
+  new_names <- dict %>% 
+    filter(field_name %in% current_names) %>% 
+    pull(label)
+  
+  names(temp) <- new_names
+
+  return(temp)
+
+}
+```
+
+```{r}
+# Function to convert Unkowns to Missing
+```
+
+```{r}
+# Create the label header dictionary
+dict <- create_name_dict()
+```
+
+
+<!-- Data processing -->
+```{r}
+# Drop those that have not consented to participate
+data %<>%
+  filter(!is.na(consent_name))
+```
+
+```{r}
+# Crate a categorical version of years of experience
+data %<>%
+  mutate(experience_cat = cut(experience, 
+   breaks =  c(-Inf, 1, 5, 10, Inf),
+   labels = c("<=1", "2-5", "6-10", ">10")))
+```
+
+
+# Demographics
+- subset of only those that consented
+```{r}
+#| eval: false
+data %>%
+  select(gender:personal_covid, experience_cat) %>%
+  select(-fte, -experience) %>% #omit fte until further processing
+  tbl_summary()
+```
+
+```{r}
+# Demographics by site type
+data %>%
+  select(gender:personal_covid, experience_cat, pcc_or_mdc) %>%
+  select(-fte, -experience) %>% #omit fte until further processing
+  # mutate(pcc_or_mdc = ifelse(pcc_or_mdc == "clinic", "MDC", "PCC")) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(
+    by = pcc_or_mdc) %>%
+  add_overall()
+```
+
+# Practice role PCC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "practice") %>%
+  select(practice_role_pcc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary()
+```
+
+# To what extent do you agree with this statement: "Treatment and symptom management for patients with Long COVID is something that a primary care practice should provide to their patients as part of comprehensive primary care." Select one number. (PCC only)
+```{r}
+data %>%
+  filter(pcc_or_mdc == "practice") %>%
+  select(agree_statement_pcc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary()
+```
+
+
+# Practice role MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "clinic") %>%
+  select(practice_role_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary()
+```
+
+# Specialty MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "clinic") %>%
+  select(specialty_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary()
+```
+
+
+# How satisfied are you with this [pcc_or_mdc]'s ability to help patients manage their Long COVID symptoms? Select the one best answer.
+```{r}
+data %>%
+  # mutate(pcc_or_mdc = ifelse(pcc_or_mdc == "clinic", "MDC", "PCC")) %>%
+  select(help_manage, pcc_or_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(by = pcc_or_mdc) %>%
+  add_overall()
+```
+
+# What are your concerns about starting/providing Long COVID treatment at this practice? Select all that apply (PCC only)
+```{r}
+data %>%
+  filter(pcc_or_mdc == "practice") %>%
+  select(starts_with("starting_treatment_pcc")) %>%
+  mutate(across(everything(), ~ifelse(.x == "Checked", 1, 0))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0, 1)))) %>%
+  tbl_summary(
+    label = list(
+      starting_treatment_pcc___1 ~ "I/our providers don't have time in their schedule",
+      starting_treatment_pcc___2 ~ "We won't get paid / will lose money",
+      starting_treatment_pcc___3 ~ "I/our providers don't know how",
+      starting_treatment_pcc___4 ~ "I/our providers don't feel like patients will be able to successfully manage symptoms",
+      starting_treatment_pcc___5 ~ "I/our providers are not interested in providing Long COVID treatment",
+      starting_treatment_pcc___6 ~ "We don't have Long COVID treatment workflows set up in our practice",
+      starting_treatment_pcc___7 ~ "We don't have time to set up a new program",
+      starting_treatment_pcc___8 ~ "Our providers don't have the ancillary rehab supports needed to treat the condition (e.g. PT, OT, etc.)",
+      starting_treatment_pcc___9 ~ "Other",
+      starting_treatment_pcc___10 ~ "None of the above are concerns"),
+    value = list(starting_treatment_pcc___1 ~ "1",
+                 starting_treatment_pcc___2 ~ "1",
+                 starting_treatment_pcc___3 ~ "1",
+                 starting_treatment_pcc___4 ~ "1",
+                 starting_treatment_pcc___5 ~ "1",
+                 starting_treatment_pcc___6 ~ "1",
+                 starting_treatment_pcc___7 ~ "1",
+                 starting_treatment_pcc___8 ~ "1",
+                 starting_treatment_pcc___9 ~ "1",
+                 starting_treatment_pcc___10 ~ "1")
+  )
+```
+
+# The following items assess the climate for managing Long COVID symptoms in this [pcc_or_mdc]. Please select one number for each item listed below.
+```{r}
+#| eval: false
+# tbl_summary version
+data %>%
+  select(expect_certain_number:appreciation, pcc_or_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(by = pcc_or_mdc) %>%
+  add_overall()
+```
+
+## Overall
+```{r}
+# tbl_likert version
+data %>%
+  select(expect_certain_number:appreciation) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "1 - Not at all",
+    "2",
+    "3 - Somewhat",
+    "4",
+    "5 - To a Great Extent",
+    "Unknown"
+  )))) %>%
+  tbl_likert()
+```
+
+
+## PCC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "practice") %>%
+  select(expect_certain_number:appreciation) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "1 - Not at all",
+    "2",
+    "3 - Somewhat",
+    "4",
+    "5 - To a Great Extent",
+    "Unknown"
+  )))) %>%
+  tbl_likert()
+```
+
+## MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "clinic") %>%
+  select(expect_certain_number:appreciation) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "1 - Not at all",
+    "2",
+    "3 - Somewhat",
+    "4",
+    "5 - To a Great Extent",
+    "Unknown"
+  )))) %>%
+  tbl_likert()
+```
+
+# Confidence and effectiveness
+* Subset to physician and APP at PCC or Physician, Resident, APP at MDC
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(confidence:effective) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary()
+```
+
+# Have you gotten additional CME on how to provide treatment for Long COVID?
+* Subset to physician and APP at PCC or Physician, Resident, APP at MDC
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(additional_cme) %>%
+  tbl_summary()
+```
+
+# To what extent do you provide these services for patients with Long COVID? Please check one box for each item listed below.  
+* Subset to physician and APP at PCC or Physician, Resident, APP at MDC
+```{r}
+#| eval: false
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(identify_patients:other_service_matrix) %>%
+  tbl_summary()
+```
+
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(identify_patients:other_service_matrix) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "Not at All",
+    "Sometimes",
+    "Very Often",
+    "Unknown"
+  )))) %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+# I am not involved in any of the items listed above
+* Subset to physician and APP at PCC or Physician, Resident, APP at MDC
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(not_involved___1) %>%
+  raw_to_label_header() %>%
+  check_to_binary() %>%
+  tbl_summary()
+```
+
+
+# Which of the following would you be interested in learning more about? Select all that apply
+* Subset to PCC Physician or APP
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  select(starts_with("interest_learning_pcc")) %>%
+  mutate(across(everything(), ~ifelse(.x == "Checked", 1, 0))) %>%
+  tbl_summary(
+    label = list(
+      interest_learning_pcc___1 ~ "How to prescribe/appropriate medications for Long COVID symptoms",
+      interest_learning_pcc___2 ~ "Therapeutic alternatives",
+      interest_learning_pcc___3 ~ "How to organize workflows to accommodate Long COVID patients",
+      interest_learning_pcc___4 ~ "Options for how to organize Long COVID management in a busy practice",
+      interest_learning_pcc___5 ~ "Recommendations around specific treatment options, as well as which ones work and do not work",
+      interest_learning_pcc___6 ~ "	Helping patients who are struggling with ongoing symptoms",
+      interest_learning_pcc___7 ~ "Resources to refer patients to for symptom treatment and management",
+      interest_learning_pcc___8 ~ "	Apps, tools and other materials to use with patients with Long COVID",
+      interest_learning_pcc___9 ~ "	How to bill for/get paid for Long COVID visits",
+      interest_learning_pcc___10 ~ "How to organize and track Long COVID symptoms with patients over time in the EMR",
+      interest_learning_pcc___11 ~ "Other",
+      interest_learning_pcc_no___1 ~ "I am not interested in any of these options listed above"
+    )
+  )
+```
+
+# In which of the following ways would you like to learn? Rank each item in order of your preference, with number 1 as the most preferred way to learn, to number 8 as the least preferred way to learn.
+* Subset to PCC Physician or APP
+```{r}
+#| eval: false
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  select(elearning_module_pcc:uptodate_pcc) %>%
+  tbl_summary()
+```
+
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  select(elearning_module_pcc:uptodate_pcc) %>%
+  mutate(referral_system_pcc = as.character(referral_system_pcc)) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "1 - Most preferred",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8 - Least preferred",
+    "Unknown"
+  )))) %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## I would not like to learn in any of these ways
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  select(not_like_to_learn_pcc___1) %>%
+  check_to_binary() %>%
+  tbl_summary()
+```
+
+# Culture
+* For each of the following questions, please indicate your level of agreement or disagreement with each statement as it applies to this [pcc_or_mdc] overall, not just for Long COVID care. For each item, select one item on the scale ranging from strongly disagree to strongly agree. 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
+
+
+## Overall
+```{r}
+data %>%
+  select(after_change:waste_dollars) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+
+## PCC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "practice") %>%
+  select(after_change:waste_dollars) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "clinic") %>%
+  select(after_change:waste_dollars) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+# Using your own definition of "burnout," please indicate which statement best describes your situation working at this [pcc_or_mdc] overall, not just for Long COVID care. Check one box:
+```{r}
+data %>%
+  select(burnout_situation, pcc_or_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(burnout_situation = factor(burnout_situation, levels = c(
+    "I enjoy my work. I have no symptoms of burnout.",
+    "Occasionally I am under stress, and I don't always have as much energy as I once did, but I don't feel burned out.",
+    "I am definitely burning out and have one or more symptoms of burnout, such as physical and emotional exhaustion.",
+    "The symptoms of burnout that I'm experiencing won't go away. I think about frustrations at work a lot.",
+    "I feel completely burned out and often wonder if I can go on. I am at the point where I may need some changes or may need to seek some sort of help.",
+    "Prefer not to answer",
+    "Unknown"
+  ))) %>%
+  tbl_summary(by = pcc_or_mdc) %>%
+  add_overall()
+```
+
+# Please answer these questions about your work satisfaction. 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
+
+## Overall
+```{r}
+data %>%
+  select(rewarding, satisfied) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## PCC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "practice") %>%
+  select(rewarding, satisfied) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "clinic") %>%
+  select(rewarding, satisfied) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unkown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
