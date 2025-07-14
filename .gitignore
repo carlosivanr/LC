@@ -9,4 +9,4 @@ scripts/participant_tracking_report.html
 
 *.docx
 *.html
-scripts/participant_accrual_report.log
+*.log
