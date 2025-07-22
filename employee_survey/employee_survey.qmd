@@ -31,6 +31,7 @@ pacman::p_load(
 
 ```{r, message=FALSE, warning=FALSE}
 data <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "raw")
+data_numeric <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "raw", "raw")
 labels <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "label")
 ```
 
@@ -85,25 +86,77 @@ raw_to_label_header <-  function(df) {
 dict <- create_name_dict()
 ```
 
+```{r}
+test <- 
+  data %>%
+    select(consent_name, employee_survey_t1_complete)
+```
 
-<!-- Data processing -->
+
+# Consent rate
+- Denominator is the total number of records available in Redcap
+```{r}
+data %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+```
+
 ```{r}
 # Drop those that have not consented to participate
 data %<>%
   filter(!is.na(consent_name))
 ```
 
+
+
+# Completion rate
+* Denominator is the number of people that provided consent
 ```{r}
-# Crate a categorical version of years of experience
+data %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+data %<>%
+  filter(employee_survey_t1_complete == "Complete")
+```
+
+```{r}
+# filter data_numeric in the same way that data_raw is filtered
+data_numeric %<>%
+  filter(record_id %in% data$record_id)
+```
+
+<!-- Data processing -->
+```{r}
+# Recode pcc_or_mdc to MDC or PCC
+data %<>%
+  mutate(pcc_or_mdc = case_match(
+    pcc_or_mdc,
+    "practice" ~ "PCC",
+    "clinic" ~ "MDC",
+    .default = NA
+  ))
+
+data_numeric %<>%
+  mutate(pcc_or_mdc = case_match(
+    pcc_or_mdc,
+    1 ~ "PCC",
+    2 ~ "MDC",
+    .default = NA
+  ))
+
+# Create a categorical version of years of experience
 data %<>%
   mutate(experience_cat = cut(experience, 
    breaks =  c(-Inf, 1, 5, 10, Inf),
    labels = c("<=1", "2-5", "6-10", ">10")))
 ```
 
-
 # Demographics
-- subset of only those that consented
+- subset of only those that completed
 ```{r}
 #| eval: false
 data %>%
@@ -127,7 +180,7 @@ data %>%
 # Practice role PCC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "practice") %>%
+  filter(pcc_or_mdc == "PCC") %>%
   select(practice_role_pcc) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   tbl_summary()
@@ -136,17 +189,28 @@ data %>%
 # To what extent do you agree with this statement: "Treatment and symptom management for patients with Long COVID is something that a primary care practice should provide to their patients as part of comprehensive primary care." Select one number. (PCC only)
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "practice") %>%
+  filter(pcc_or_mdc == "PCC") %>%
   select(agree_statement_pcc) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   tbl_summary()
+```
+
+```{r}
+data_numeric %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(agree_statement_pcc) %>%
+  tbl_summary(
+    type = list(agree_statement_pcc ~ "continuous"),
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})"),
+    missing = "no"
+  )
 ```
 
 
 # Practice role MDC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "clinic") %>%
+  filter(pcc_or_mdc == "MDC") %>%
   select(practice_role_mdc) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   tbl_summary()
@@ -155,7 +219,7 @@ data %>%
 # Specialty MDC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "clinic") %>%
+  filter(pcc_or_mdc == "MDC") %>%
   select(specialty_mdc) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   tbl_summary()
@@ -175,7 +239,7 @@ data %>%
 # What are your concerns about starting/providing Long COVID treatment at this practice? Select all that apply (PCC only)
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "practice") %>%
+  filter(pcc_or_mdc == "PCC") %>%
   select(starts_with("starting_treatment_pcc")) %>%
   mutate(across(everything(), ~ifelse(.x == "Checked", 1, 0))) %>%
   mutate(across(everything(), ~ factor(.x, levels = c(0, 1)))) %>%
@@ -215,6 +279,29 @@ data %>%
   add_overall()
 ```
 
+## Numeric scores
+```{r}
+ic_scores <- data_numeric %>%
+    select(expect_certain_number:appreciation, record_id) %>%
+    score_ic_scale(., "record_id")
+```
+
+```{r}
+data %<>%
+  left_join(ic_scores, by = "record_id")
+```
+
+```{r}
+data %>%
+  select(AvgImplScale, pcc_or_mdc) %>%
+  tbl_summary(by = pcc_or_mdc,
+    type = all_continuous() ~ "continuous",
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75}))")
+  ) %>%
+  add_overall()
+```
+
+
 ## Overall
 ```{r}
 # tbl_likert version
@@ -237,7 +324,7 @@ data %>%
 ## PCC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "practice") %>%
+  filter(pcc_or_mdc == "PCC") %>%
   select(expect_certain_number:appreciation) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   raw_to_label_header() %>%
@@ -255,7 +342,7 @@ data %>%
 ## MDC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "clinic") %>%
+  filter(pcc_or_mdc == "MDC") %>%
   select(expect_certain_number:appreciation) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   raw_to_label_header() %>%
@@ -280,6 +367,24 @@ data %>%
   select(confidence:effective) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   tbl_summary()
+```
+
+
+```{r}
+ids <- data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  pull(record_id)
+
+data_numeric %>%
+  filter(record_id %in% ids) %>%
+  select(confidence:effective) %>%
+  tbl_summary(
+    type = list(everything() ~ "continuous"),
+        statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})"),
+    missing = "no"
+  )
 ```
 
 # Have you gotten additional CME on how to provide treatment for Long COVID?
@@ -397,6 +502,27 @@ data %>%
   add_n()
 ```
 
+
+### Lower = more preferred
+```{r}
+ids <- data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  pull(record_id)
+
+
+data_numeric %>%
+  filter(record_id %in% ids) %>%
+  select(elearning_module_pcc:uptodate_pcc) %>%
+  raw_to_label_header() %>%
+  tbl_summary(
+    type = everything() ~ "continuous",
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})"),
+    missing = "no"
+  )
+```
+
+
 ## I would not like to learn in any of these ways
 ```{r}
 data %>%
@@ -410,11 +536,70 @@ data %>%
 # Culture
 * For each of the following questions, please indicate your level of agreement or disagreement with each statement as it applies to this [pcc_or_mdc] overall, not just for Long COVID care. For each item, select one item on the scale ranging from strongly disagree to strongly agree. 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
 
+```{r}
+pc_scores <- data_numeric %>%
+  select(record_id, after_change:environment) %>%
+  score_pc_scale(., "record_id")
+```
+
+```{r}
+# Merge the scored practice culture values with the main data frame
+data %<>%
+  left_join(., pc_scores, by = "record_id")
+```
+
+## Numeric scores
+```{r}
+data %>%
+  select(pc_imp_subscore:CultureAvg, pcc_or_mdc) %>%
+  tbl_summary(by = pcc_or_mdc,
+    type = everything() ~ "continuous",
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})")
+  ) %>%
+  add_overall()
+```
+
+## Overall frequencies
+```{r}
+data %>%
+  select(after_change:environment) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## PCC frequencies
+```{r}
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(after_change:environment) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## MDC frequencies
+```{r}
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(after_change:environment) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+# Please answer the following questions regarding patients with Long COVID symptoms (choose one number for each item) 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
 
 ## Overall
 ```{r}
 data %>%
-  select(after_change:waste_dollars) %>%
+  select(prefer_not:waste_dollars) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
   raw_to_label_header() %>%
@@ -426,8 +611,8 @@ data %>%
 ## PCC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "practice") %>%
-  select(after_change:waste_dollars) %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(prefer_not:waste_dollars) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
   raw_to_label_header() %>%
@@ -438,8 +623,8 @@ data %>%
 ## MDC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "clinic") %>%
-  select(after_change:waste_dollars) %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(prefer_not:waste_dollars) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
   raw_to_label_header() %>%
@@ -481,7 +666,7 @@ data %>%
 ## PCC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "practice") %>%
+  filter(pcc_or_mdc == "PCC") %>%
   select(rewarding, satisfied) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
@@ -493,7 +678,7 @@ data %>%
 ## MDC
 ```{r}
 data %>%
-  filter(pcc_or_mdc == "clinic") %>%
+  filter(pcc_or_mdc == "MDC") %>%
   select(rewarding, satisfied) %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unkown")))) %>%
