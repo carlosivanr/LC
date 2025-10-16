@@ -13,7 +13,7 @@ set r_version="C:\Program Files\R\R-4.4.1\bin\Rscript.exe"
 set r_commands="renv::load('D:/long_covid'); source('D:/long_covid/patient_survey_accrual/render_patient_accrual_report.R')"
 
 :: path to the log output file in windows back slash format
-set log_out="D:\long_covid\patient_survey_accrual\patient_accrual.log"
+set log_out="D:\long_covid\patient_survey_accrual\patient_accrual_log.log"
 
 :: Change directory to the project root
 cd %proj_root%

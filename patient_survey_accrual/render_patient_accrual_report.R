@@ -26,7 +26,7 @@ quarto_render(
 
 # Place a copy of the most recent report in the Egnyte folder -----------------
 from <- here(
-  "patient_survey_accrual/patient_accrual_report.html"
+  "patient_survey_accrual/patient_accrual_report.docx"
 )
 
 print(getwd())
@@ -36,7 +36,7 @@ print(from)
 to <- str_c(
   "Z:/Shared/DFM/AHRQ_Long COVID/Patient Survey Accrual Reports/patient_survey_accrual_report_", 
   Sys.Date(),
-  ".html"
+  ".docx"
 )
 
 print(to)

@@ -1,5 +1,5 @@
 ---
-title: "Patient Survey Accrual Report"
+title: "Patient Survey Accrual Report Version 2"
 
 date: "`r format(Sys.Date(), '%m-%d-%Y')`"
 
@@ -13,23 +13,16 @@ execute:
   echo: false
 ---
 
-```{r}
-# /////////////////////////////////////////////////////////////////////////////
-# Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
-# AHRQ Long COVID - participant accrual report
-# The purpose of this report is to monitor patient enrollment into the study
-#
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
 
-# Notes: 
-# Elena asked about conversion rates
-# How to define someone who's been screened and someone who has been enrolled?
-# Use whether or not the last instrument is marked as complete. See notes
-# below.
+library(dfmtbx)
+# renv::install("carlosivanr/dfmtbx") # To update
 
-# Elena also asked about displaying data by Timepoint, but probably doesn't make
-# sense until we have T2 data available
-# *** Settled on breaking apart by MDC and PCC
-# /////////////////////////////////////////////////////////////////////////////
+pacman::p_load(
+  tidyverse,
+  gtsummary
+)
 ```
 
 ```{r}
@@ -40,32 +33,14 @@ execute:
 ```
 
 ```{r, message=FALSE, warning=FALSE}
-library(magrittr, include = "%<>%")
-library(dfmtbx)
-
-pacman::p_load(
-  tidyverse,
-  gtsummary
-)
-```
-
-```{r}
-# Variables to pull
-# Upload to RedCap, instead of egnyte, to have the report always available
-# Or save as RMD and see if it can save that way.
-# promis_record_id
-# demographic variables
-```
-
-```{r, message=FALSE, warning=FALSE}
 # Pull report 148994 as labeled data
 # Corresponds to patient_enrollment report in REDCap
-data <- pull_redcap_report(Sys.getenv("LC_patient"), "148994", "label", "raw", "false")
+data <- pull_redcap_report(Sys.getenv("LC_patient"), "148994", "label", "raw", "true")
 
 # Capture the column names
 names_data <- names(data)
 
-# Drop the demographic select all the apply questions
+# Drop the demographic select all that apply questions
 data %<>%
   select(
     -starts_with("patient_race"),
@@ -74,8 +49,6 @@ data %<>%
     -redcap_event_name # use raw instead of label to preserve prior functions
 )
 ```
-
-
 
 ```{r, message=FALSE, warning=FALSE}
 # Pull report 148994 as raw data for the demographic variables only
@@ -105,66 +78,56 @@ data %<>%
 rm(demographics, names_data)
 ```
 
+
 ```{r}
-# Remove duplicated rows and test records
-# - record_id 10 is the incomplete row of record_id 9
-# - record_ids 14-16 and 18 are test records
-# - record_id 6 and 35 are the less complete rows of record_id 38
-# data %<>%
-#   filter(!record_id %in% 
-#   c(10, 
-#     14,
-#     15,
-#     16,
-#     18,
-#     35, 36, 38))
+# Determine how many time points are available. As of 09/29/2025, 4 unique time points
+timepoints <- length(table(data$redcap_event_name))
 
-# Check if there are any duplicates
-# duplicates <- data %>%
-#   filter(redcap_event_name == "patient_preenrollm_arm_1") %>%
-#   group_by(name) %>%
-#   count() %>%
-#   ungroup() %>%
-#   filter(n > 1) %>%
-#   nrow()
+# Send an email as soon as an additional time point is added
+if (timepoints > 4) {
+  # If there are duplicates, notify by email
+  library(Microsoft365R)
 
-# Test to see if there are any duplicates
-# if (duplicates != 0) {
-#   # If there are duplicates, notify by email
-#   library(Microsoft365R)
+  # Authenticate and get your Outlook object
+  outlook <- get_business_outlook()  # or get_personal_outlook()
 
-#   # Authenticate and get your Outlook object
-#   outlook <- get_business_outlook()  # or get_personal_outlook()
+  # Create and send an email
+  email <- outlook$create_email(
+    body = "T3 data detected in Long COVID RedCap. Update patient_accrual_report",
+    subject = "Long COVID: New timepoint detected.",
+    to = "carlos.i.rodriguez@cuanschutz.edu"
+  )
 
-#   # Create and send an email
-#   email <- outlook$create_email(
-#     body = "Error in patient_accrual_report.qmd. Unreconciled duplicates detected.",
-#     subject = "Error in Long COVID automated workflow.",
-#     to = "carlos.i.rodriguez@cuanschutz.edu"
-#   )
-
-#   email$send()
-
-#   # Stop the render
-#   stop("Error in .qmd file. Possible duplicated name. Check data")
-# }
+  email$send()
+  
+}
 ```
 
-```{r}
-# 2nd version of the algorithm to remove test and duplicated ids
-test_ids <- c(14, 15, 16, 18)
 
-# Identify duplicated record_ids
+```{r}
+# Identify test records as those with the "test" in the name field OR those
+# with "test record" in the anything else field
+test_ids <- 
+  data %>%
+    filter(
+      grepl("test", name, ignore.case = TRUE) | 
+      grepl("test record", anythingelse, ignore.case = TRUE)) %>%
+    pull(record_id)
+
+# Identify duplicated record_ids as those with "Duplicated record" in the 
+# enrollstatus field
 duplicated_ids <- 
   data %>%
     filter(enrollstatus == "Duplicate record") %>%
     pull(record_id)
 
+# Remove the test and duplicated ids
 data %<>%
   filter(!record_id %in% c(test_ids, duplicated_ids))
 ```
 
 ```{r}
+# /////////////////////////////// Data Clean Up ///////////////////////////////
 # Create a site variable by coalescing mdc_name and pcc_name before filling
 # values
 data %<>%
@@ -181,188 +144,113 @@ data %<>%
 data %<>%
   rename(site_type = pcc_or_mdc) %>%
   mutate(site_type = ifelse(is.na(site_type), "Unknown", site_type)) %>%
-  mutate(site_name = ifelse(is.na(site_name), "Unknown", site_name))  
+  mutate(site_name = ifelse(is.na(site_name), "Unknown", site_name))
 ```
 
-<!-- Table of pre-enrolled patients version 2 -->
 ```{r}
-# Check if the consent name is missing and patient_consent_form_complete, which
-# would indicate flawed logic for reporting purposes
+# ////////////////////////// Data check for consent ///////////////////////////
+# Check to ensure that if the consent_name and patient_consent_form_complete 
+# are both missing to validate that one or the other can be used to reliably 
+# indicate whether consent was given,
 mismatched_consent_values <- 
   data %>% 
   filter(is.na(consent_name) & patient_consent_form_complete == "Complete") %>% 
   nrow()
 
-# Check
+# If the number of mismatched_consent_values is not 0, then notify by sending
+# an email to manually review records
 if (mismatched_consent_values > 0) {
   # If there are duplicates, notify by email
   library(Microsoft365R)
 
-  # Authenticate and get your Outlook object
+  # Authenticate and create Outlook object
   outlook <- get_business_outlook()  # or get_personal_outlook()
 
-  # Create and send an email
+  # Create email
   email <- outlook$create_email(
     body = "Error in patient_accrual_report.qmd. Mismatched consent values detected.",
     subject = "Error in Long COVID automated workflow.",
     to = "carlos.i.rodriguez@cuanschutz.edu"
   )
 
+  # Send email
   email$send()
 
   # Stop the render
-  stop("Error in .qmd file. Logic error in counting consented vs consent form complete. Revise code.")
+  stop("Error in .qmd file. Logic error in counting consented vs consent form complete. Review data.")
 }
 ```
 
+
 ```{r}
-# Create a sub data frame for making the primary table of screened & enrolled,
-# and consented patients. The denominator is the number of unique record_ids 
-# excluding the test and duplicated records. 
-# tab_data <- data %>%
-#   select(record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete) %>%
-#   group_by(record_id) %>%
-#   fill(enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, .direction = "updown") %>%
-#   slice_head() %>%
-#   ungroup() %>%
-#   mutate(
-#     across(
-#       enrollstatus:healthrelated_social_needs_complete, 
-#       ~ ifelse(grepl("complete", .x, ignore.case = TRUE), 1,0))
-#   )
-
-
+# DEVELOPMENT
 # Remove enrollstatus == "No response" | is.na(enrollstatus)
+# These would be classified as those that have not been contacted yet either 
+# because the candidate has not been reached, or the study team hasn't gotten
+# to attempting contact yet. Would be used to filter out any of these IDs from
+# tabulating, but not yet implemented. CR 09/29/2025
 no_contact_ids <- data %>%
   filter(redcap_event_name == "screening_and_enro_arm_1", is.na(enrollstatus)) %>%
   pull(record_id)
+```
 
+```{r}
+#  Create a dataframe with binary variables to tabulate the number of screened, 
+# enrolled, and consented patients.
 tab_data <- data %>%
-  # filter(!record_id %in% c(40, 42)) %>% # place holder for the no response/ no contact yet.
   select(record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete) %>%
   group_by(record_id) %>%
   fill(enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, .direction = "updown") %>%
   slice_head() %>%
   ungroup() %>%
   # This section placed here to match Izzy's definitions
+  # mutate(
+  #   enrollstatus = ifelse(
+  #     record_id %in% c(4, 22, 26, 30), 
+  #     "Enrollment completed", 
+  #     enrollstatus)) %>%
+  # mutate(
+  #   patient_consent_form_complete = ifelse(
+  #     record_id %in% c(4, 22, 26, 30), 
+  #     NA, patient_consent_form_complete)) %>%
+  
+  # Convert missing values in enrollstatus to Unknown/ could be not yet screened or contacted but no response
   mutate(
-    enrollstatus = ifelse(
-      record_id %in% c(4, 22, 26, 30), 
-      "Enrollment completed", 
-      enrollstatus)) %>%
-  mutate(
-    patient_consent_form_complete = ifelse(
-      record_id %in% c(4, 22, 26, 30), 
-      NA, patient_consent_form_complete)) %>%
-  mutate(
-    across(
-      enrollstatus:healthrelated_social_needs_complete, 
-      ~ ifelse(grepl("Incomplete", .x, ignore.case = TRUE), 0, .x)),
-    across(
-      enrollstatus:healthrelated_social_needs_complete, 
-      ~ ifelse(grepl("complete", .x, ignore.case = TRUE), 1, 0)),
-  ) 
+    across(enrollstatus:healthrelated_social_needs_complete, ~ ifelse(is.na(.x), "Unknown", .x)))
+
+  # This was an older version, but it may be more clearer if the variables are not binarized
+  # mutate(
+  #   across(
+  #     enrollstatus:healthrelated_social_needs_complete, 
+  #     ~ ifelse(grepl("Incomplete", .x, ignore.case = TRUE), 0, .x)),
+  #   across(
+  #     enrollstatus:healthrelated_social_needs_complete, 
+  #     ~ ifelse(grepl("complete", .x, ignore.case = TRUE), 1, 0)),
+  # ) 
 ```
-
-```{r}
-#| eval: false
-no_contact <- data %>% filter(record_id %in% c(40, 42))
-
-enrolled_not_consented <- 
-  data %>% filter(record_id %in% c(4, 22, 26, 30))
-
-enrolled_not_consented %>%
-  select(record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete) %>%
-  group_by(record_id) %>%
-  fill(enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, .direction = "updown") %>%
-  slice_head() %>%
-  ungroup() %>%
-  mutate(
-    across(
-      enrollstatus:healthrelated_social_needs_complete, 
-      ~ ifelse(grepl("Incomplete", .x, ignore.case = TRUE), 0, .x)),
-    across(
-      enrollstatus:healthrelated_social_needs_complete, 
-      ~ ifelse(grepl("complete", .x, ignore.case = TRUE), 1, 0)),
-  )
-```
-
-```{r}
-data %>%
-  filter(redcap_event_name == "screening_and_enro_arm_1") %>%
-  mutate(enrollstatus = 
-    fct_na_value_to_level(factor(enrollstatus), level = "Missing")) %>%
-  select(enrollstatus) %>%
-  tbl_summary()
-```
-
-```{r}
-# The N here is 28, whereas in the previous table, the N was 29. indicating there may be a record missing, so the denominator
-# is different, but the value is still the same
-enrolled_ids <- data %>% 
-  filter(enrollstatus == "Enrollment completed") %>% 
-  pull(record_id)
-
-# enrolled but missing a record
-
-
-# data %>%
-#   filter(record_id %in% ) %>% 
-#   filter(redcap_event_name == "consent_and_t1_sur_arm_1") %>%
-#   select(patient_consent_form_complete) %>%
-#   tbl_summary()
-```
-
 
 # Screened and consented patients
-- Pre-enrolled patients: Number of unique record ids excluding test and duplicated records
-- Screened and enrolled: Number of unique record ids where enrollstatus is complete
-- Consented: Number of unique record ids where patient_consent_form is complete
+- Total unique patients: Total number of number of unique record ids excluding test and duplicated records found in RedCap.
 ```{r}
 tab_data %>%
   select(-record_id, -healthrelated_social_needs_complete) %>%
   tbl_summary(
     label = list(
-      enrollstatus ~ "Screened and enrolled",
-      patient_consent_form_complete ~ "Consented")
+      enrollstatus ~ "RedCap field: enrollstatus",
+      patient_consent_form_complete ~ "RedCap field: patient consent form complete")
   ) %>%
-  modify_header(label = "**Pre-enrolled patients**")
+  modify_header(label = "**Total unique patients**")
 ```
 
-<!-- Table of pre-enrolled patients version 1 -->
-```{r}
-#| eval: false
-# Table of overall number of patients pre-enrolled as denominator and
-# 1. number of screened as numerator
-# 2. number of consented and T1 as numerator
-data %>%
-  mutate(obs = 1) %>%
-  select(record_id, redcap_event_name, obs) %>%
-  group_by(record_id) %>%
-  pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
-  ungroup() %>%
-  mutate(
-    across(
-      patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
-      ~ ifelse(is.na(.x), 0, .x))) %>%
-  select(-record_id, -patient_preenrollm_arm_1) %>%
-  tbl_summary(
-    value = list(screening_and_enro_arm_1 ~ "1"),
-    label = list(
-      screening_and_enro_arm_1 ~ "Screened and enrolled",
-      consent_and_t1_sur_arm_1 ~ "Consent & T1")
-  ) %>%
-  modify_header(label = "**Pre-enrolled patients**")
-```
 
 # Consented patients by Site Type and Site Name
 ```{r}
-# Denominator of those tha have consented
+# Denominator of those that have consented
 data %>%
   group_by(record_id) %>%
   slice_head() %>%
   ungroup() %>%
-  filter(record_id %in% (tab_data %>% filter(patient_consent_form_complete == 1) %>% pull(record_id))) %>%
+  filter(record_id %in% (tab_data %>% filter(patient_consent_form_complete == 1 | patient_consent_form_complete == "Complete") %>% pull(record_id))) %>%
   select(site_type, site_name) %>%
   tbl_summary(
     label = list(
@@ -371,137 +259,80 @@ data %>%
   )
 ```
 
-```{r}
-#| eval: false
-# Values by pcc or mdc
-data %>%
-  mutate(obs = 1) %>%
-  select(record_id, redcap_event_name, site_type, obs) %>%
-  group_by(record_id) %>%
-  pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
-  ungroup() %>%
-  mutate(
-    across(
-      patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
-      ~ ifelse(is.na(.x), 0, .x))) %>%
-  select(-record_id, -patient_preenrollm_arm_1,) %>%
-  tbl_summary(
-    by = site_type,
-    value = list(screening_and_enro_arm_1 ~ "1"),
-    label = list(
-      screening_and_enro_arm_1 ~ "Screened",
-      consent_and_t1_sur_arm_1 ~ "Consent")
-  ) %>%
-  modify_header(label = "**Pre-enrolled patients**")
-```
-
-```{r}
-#| eval: false
-# Values by site name
-data %>%
-  mutate(obs = 1) %>%
-  select(record_id, redcap_event_name, site_name, obs) %>%
-  group_by(record_id) %>%
-  pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
-  ungroup() %>%
-  mutate(
-    across(
-      patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
-      ~ ifelse(is.na(.x), 0, .x))) %>%
-  select(-record_id, -patient_preenrollm_arm_1,) %>%
-  tbl_summary(
-    by = site_name,
-    value = list(screening_and_enro_arm_1 ~ "1"),
-    label = list(
-      screening_and_enro_arm_1 ~ "Screened",
-      consent_and_t1_sur_arm_1 ~ "Consent & T1")
-  ) %>%
-  modify_header(label = "**Pre-enrolled patients**")
-```
-
-```{r}
-# MDC only
-# data %>%
-#   filter(pcc_or_mdc == "MDC") %>%
-#   mutate(obs = 1) %>%
-#   select(record_id, redcap_event_name, obs, redcap_event_name) %>%
-#   group_by(record_id) %>%
-#   pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
-#   ungroup() %>%
-#   mutate(
-#     across(
-#       patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
-#       ~ ifelse(is.na(.x), 0, .x))) %>%
-#   select(-record_id, -patient_preenrollm_arm_1, -screening_and_enro_arm_1) %>%
-#   tbl_summary(
-#     label = list(
-#       # screening_and_enro_arm_1 ~ "Screened",
-#       consent_and_t1_sur_arm_1 ~ "Consent & T1")
-#   ) %>%
-#   modify_header(label = "**MDC Pre-enrolled patients**")
-```
-
-```{r}
-# PCC only
-# data %>%
-#   filter(pcc_or_mdc == "PCC") %>%
-#   mutate(obs = 1) %>%
-#   select(record_id, redcap_event_name, obs, redcap_event_name) %>%
-#   group_by(record_id) %>%
-#   pivot_wider(names_from = redcap_event_name, values_from = obs) %>%
-#   ungroup() %>%
-#   mutate(
-#     across(
-#       patient_preenrollm_arm_1:consent_and_t1_sur_arm_1, 
-#       ~ ifelse(is.na(.x), 0, .x))) %>%
-#   select(-record_id, -patient_preenrollm_arm_1, -screening_and_enro_arm_1) %>%
-#   tbl_summary(
-#     label = list(
-#       # screening_and_enro_arm_1 ~ "Screened",
-#       consent_and_t1_sur_arm_1 ~ "Consent & T1")
-#   ) %>%
-#   modify_header(label = "**PCC Pre-enrolled patients**")
-```
-
-# Survey completion rates for T1 Overall
+# Survey completion rates for T1 and T2 Overall
 - denominator consists of unique records where patient_consent_form is complete 
 ```{r}
 # Denominator is a complete pre-enrollment form
 # T1 Numerator is a complete health related social needs form at consent_and_t1_sur_arm_1
-# T2 Numerator is a complete disability form at t2_survey_arm_1
+# T2 Numerator is a complete Experiences with care t2_survey_arm_1
 # T3 Numerator is a complete Experiences with care t3_survey_arm_1
 # T4 Numerator is a complete Experiences with care t4_survey_arm_1
 ```
 
 ```{r}
 # denominator
-denominator_ids <- 
-  data %>%
-  filter(patient_enrollment_form_complete == "Complete") %>%
+# *** patient record_id 41 consented, but patient_enrollment_form_complete not
+# complete at T1
+# The patient consent form complete can be used because there are no values 
+# where patient consent is complete and consent_name is missing
+consented_ids <- 
+  tab_data %>%
+  filter(patient_consent_form_complete == "Complete") %>%
   pull(record_id)
+
+
 
 # Create a table using the record_ids in denominator ids which are the
 # participants that have a complete patient_enrollment_form this will give
 # the proportion of individuals who have consented and submitted a T1 
 # survey out of those recruited from the clinics to undergo screening.
-data %>%
-  filter(
-    record_id %in% denominator_ids,
-    redcap_event_name == "consent_and_t1_sur_arm_1"
-  ) %>%
-  select(healthrelated_social_needs_complete) %>%
-  tbl_summary(
-    label = list(
-      "healthrelated_social_needs_complete" ~ "Health Related Social Needs Form"
-    )
-    )
+tab_t1_t2_rates <- 
+  data %>%
+  filter(record_id %in% consented_ids) %>%
+  group_by(record_id) %>%
+  fill(c(
+    healthrelated_social_needs_complete, 
+    healthrelated_social_needs_timestamp,
+    pasc_symptoms_and_followup_questions_complete,
+    experiences_with_care_complete,
+    experiences_with_care_timestamp), 
+    .direction = "updown") %>%
+  mutate(across(c(
+    healthrelated_social_needs_timestamp, 
+    experiences_with_care_timestamp), ~ as.Date(.x))) %>%
+  slice_head() %>%
+  ungroup() %>%
+  mutate(days_since_t1 = 
+    as.numeric(Sys.Date() - healthrelated_social_needs_timestamp)) %>%
+  select(
+    record_id,
+    healthrelated_social_needs_complete, 
+    pasc_symptoms_and_followup_questions_complete,
+    experiences_with_care_complete,
+    days_since_t1) %>%
+  mutate(t2_status = ifelse(
+    is.na(experiences_with_care_complete) & days_since_t1 < 90, 
+    "Not due", 
+    experiences_with_care_complete)) %>%
+  mutate(t2_status = ifelse(
+    is.na(experiences_with_care_complete) & is.na(t2_status) & days_since_t1 >= 90 & days_since_t1 < 135, 
+    "Within window", 
+    t2_status)) %>%
+  mutate(t2_status = ifelse(
+    pasc_symptoms_and_followup_questions_complete == "Incomplete", "Incomplete PASC", t2_status
+  ))
+```
+
+
+```{r}
+# There are two patients in tab_t1_t2_rates, record_ids 17 and 41 that have a partial completion of the T1 survey. Not sure if they will receive an invite for T2.
 ```
 
 ## Survey completion rates for T1 by Site Type
 ```{r}
 data %>%
   filter(
-    record_id %in% denominator_ids,
+    record_id %in% consented_ids,
     redcap_event_name == "consent_and_t1_sur_arm_1"
   ) %>%
   select(healthrelated_social_needs_complete, site_type) %>%
@@ -512,6 +343,27 @@ data %>%
     )
     ) 
 ```
+
+## Survey completion rates for T2 by Site Type
+```{r}
+tab_t1_t2_rates %>%
+  left_join(., data %>% 
+               filter(record_id %in% tab_t1_t2_rates$record_id) %>% 
+               select(site_type, record_id) %>% 
+               group_by(record_id) %>% 
+               slice_head() %>% 
+               ungroup(),
+            by = "record_id") %>%
+  select(-days_since_t1, -experiences_with_care_complete, -record_id, -pasc_symptoms_and_followup_questions_complete) %>%
+  tbl_summary(
+    by = "site_type",
+    label = list(
+      healthrelated_social_needs_complete = "Health Related Social Needs Form (T1)",
+      t2_status = "T2 Status"
+    )
+  )
+```
+
 
 <!-- # Patient Demographics -->
 ```{r}
@@ -525,10 +377,11 @@ data_full <- data
 ```
 
 ```{r}
-# Patient age gender and sexualt orientation
+# Patient age gender and sexual orientation
 data <- 
   data %>%
   filter(redcap_event_name == "consent_and_t1_sur_arm_1") %>%
+  filter(record_id %in% consented_ids) %>%
   # mutate(patient_age = sample(18:75, n(), replace = TRUE)) %>% # Fabricate data
   mutate(age_group = case_when(
                                patient_age >= 18 & patient_age < 35 ~ "18-34",
@@ -558,6 +411,7 @@ data <-
   #                                     8 ~ "PrefNoAnswr"))
 ```
 
+# Patient demographics & characteristics
 ## Age, gender, sexual orientation
 ```{r}
 # Patient age, gender and sexual orientation

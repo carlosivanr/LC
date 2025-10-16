@@ -1,0 +1,342 @@
+---
+title: "EHR SDOH C3924_T3 2024-04-17"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format: 
+  docx:
+    toc: true
+    embed-resources: true
+    reference-doc: "D:/custom-reference-doc.docx"
+
+execute: 
+  echo: false
+---
+
+
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
+# AHRQ Long COVID - employee survey
+# /////////////////////////////////////////////////////////////////////////////
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+library(dfmtbx)
+
+pacman::p_load(
+  tidyverse,
+  gtsummary
+)
+```
+
+
+```{r}
+# Load data
+data <- read_csv(file = "D:\\long_covid\\sdoh\\C3924_T3_SDOH_20250417_AHRQ.csv",
+  show_col_types = FALSE)
+```
+
+```{r}
+# Load dictionary for question text to flowsheet name
+labels <- read_csv(file = "D:\\long_covid\\sdoh\\SOCIAL DRIVERS FLOWSHEET VALUE.csv",
+  show_col_types = FALSE)
+```
+
+```{r}
+#| eval: false
+
+labels %>% drop_na()
+
+labels %>%
+  # mutate(across(everything(), ~ sub("\\[.*", "", .x))) %>%
+  # mutate(across(everything(), ~ str_trim(.x, side = "right"))) %>%
+  mutate(across(`Row Name`, ~ str_replace_all(.x, " ", "_")))
+
+write_csv(labels, "D:\\long_covid\\sdoh\\SOCIAL DRIVERS FLOWSHEET VALUE.csv")
+```
+
+## Unique participants
+```{r}
+data %>%
+  summarise(n = n_distinct(arb_person_id)) %>%
+  gt::gt()
+```
+
+## Unique number of flowsheet row names (questions)
+```{r}
+data %>%
+  summarise(n = n_distinct(flowsheet_row_name)) %>%
+  gt::gt()
+```
+
+## Frequencies & proportions for flowsheet row names (questions)
+
+```{r}
+unique_qs <- data %>% distinct(flowsheet_row_name) %>% pull()
+```
+
+```{r}
+data_wide <- data %>%
+  group_by(arb_person_id) %>%
+  pivot_wider(names_from = flowsheet_row_name, values_from = VALUE) %>%
+  ungroup()
+```
+
+
+```{r}
+# Prepare data
+col_names <- names(data_wide)
+col_names <- str_replace_all(col_names, " ", "_")
+names(data_wide) <- col_names
+
+data %<>% as_tibble()
+```
+
+```{r}
+data_wide %<>% 
+  # mutate 97 and 98 as Patient unable to answer, and Patient declined
+  mutate(across(c(R_FINANCIAL_RESOURCE_STRAIN_BASICS), ~ case_match(.x, 
+    "1" ~ "Very hard",
+    "2" ~ "Hard",
+    "3" ~ "Somewhat hard",
+    "4" ~ "Not very hard",
+    "5" ~ "Not hard at all",
+    .default = .x))) %>%
+# AUDIT -----------------------------------------------------------------------
+mutate(across(c(R_AUDIT_ALCOHOL_BINGE), ~ case_match(.x, 
+    "1" ~ "Never",
+    "2" ~ "Less than monthly",
+    "3" ~ "Monthly",
+    "4" ~ "Weekly",
+    "5" ~ "Daily or almost",
+    "98" ~ "Declined",
+    "97" ~ "Unable",
+    .default = .x))) %>%
+mutate(across(c(R_AUDIT_ALCOHOL_STD_DRINKS), ~ case_match(.x, 
+    "0" ~ "Patient does not drink",
+    "1" ~ "1 or 2",
+    "2" ~ "3 or 4",
+    "3" ~ "5 or 6",
+    .default = .x))) %>%
+mutate(across(c(R_AUDIT_ALCOHOL_FREQUENCY), ~ case_match(.x, 
+    "1" ~ "Never",
+    "2" ~ "Montly or less",
+    "3" ~ "2-4 times a month",
+    "4" ~ "2-4 times a week",
+    "5" ~ "4 or more times a week",
+    .default = .x))) %>%
+# Social Connection and Isolation Panel ---------------------------------------
+mutate(across(c(R_SOCIAL_CONNECTIONS_MARITAL_STATUS), ~ case_match(.x,
+    "3" ~ "Married",
+    "4" ~ "Widowed",
+    "5" ~ "Divorced",
+    "6" ~ "Separated",
+    "7" ~ "Never married",
+    "8" ~ "Living with partner",
+    .default = .x))) %>%
+mutate(
+  across(c(R_SOCIAL_CONNECTIONS_PHONE, 
+           R_SOCIAL_CONNECTIONS_GET_TOGETHER), ~ case_match(.x,
+    "1" ~ "Never",
+    "2" ~ "Once a week",
+    "3" ~ "Twice a week",
+    "4" ~ "Three times a week",
+    "5" ~ "More than three times a week",
+    .default = .x))) %>%
+mutate(
+  across(c(R_SOCIAL_CONNECTIONS_RELIGION, 
+           R_SOCIAL_CONNECTIONS_CLUB_ATTENDANCE), ~ case_match(.x,
+    "1" ~ "Never",
+    "2" ~ "1 to 4 times per year",
+    "3" ~ "More than 4 times per year",
+    .default = .x))) %>%
+mutate(
+  across(c(R_SOCIAL_CONNECTIONS_CLUB_MEMBERSHIP), ~ case_match(.x,
+    "1" ~ "Yes",
+    "2" ~ "No",
+    .default = .x))) %>%
+# Children's Watch ------------------------------------------------------------
+mutate(
+  across(c("R_CHILDREN'S_HEALTHWATCH_HOUSING_HOMELESS", 
+           "R_CHILDREN'S_HEALTHWATCH_HOUSING_MORTGAGE"), ~ case_match(.x,
+    "1" ~ "Yes",
+    "2" ~ "No",
+    .default = .x))) %>%
+# Health Related Social Needs Screening Tool ----------------------------------
+mutate(
+  across(c(R_FOOD_INSECURITY_WORRY, 
+           R_FOOD_INSECURITY_ABILITY_TO_PAY), ~ case_match(.x,
+    "1" ~ "Never true",
+    "2" ~ "Sometimes true",
+    "3" ~ "Often true",
+    .default = .x))) %>%
+mutate(
+  across(c(R_TRANSPORTATION_DAILY_LIVING, 
+           R_TRANSPORTATION_MEDICAL_APPT,
+           R_AHC_HRSN_UTILITIES), ~ case_match(.x,
+    "1" ~ "Yes",
+    "2" ~ "No",
+    .default = .x))) %>%
+mutate(
+  across(c(R_AHC_HRSN_UTILITIES), ~ case_match(.x,
+    "3" ~ "Already shut off",
+    .default = .x))) %>%
+# Stress Anxious --------------------------------------------------------------
+mutate(
+  across(c(R_STRESS_ANXIOUS), ~ case_match(.x,
+    "1" ~ "Not at all",
+    "2" ~ "Only a little",
+    "3" ~ "To some extent",
+    "4" ~ "Rather much",
+    "5" ~ "Very much",
+    .default = .x)))
+```
+
+# Health Related Social Need Screening Tool
+```{r}
+old_names <- data_wide %>%
+  select(starts_with("R_FOOD"), starts_with("R_TRANSPORTATION"), R_AHC_HRSN_UTILITIES) %>%
+  names()
+
+new_names <- labels %>%
+  filter(`Row Name` %in% old_names)
+
+data_wide %>%
+  select(starts_with("R_FOOD"), starts_with("R_TRANSPORTATION"), R_AHC_HRSN_UTILITIES) %>%
+  tbl_summary(
+    type = list(everything() ~ "categorical"),
+    label = list(
+      R_AHC_HRSN_UTILITIES = new_names$`Row Display Name`[1],
+      R_FOOD_INSECURITY_ABILITY_TO_PAY = new_names$`Row Display Name`[2],
+      R_FOOD_INSECURITY_WORRY = new_names$`Row Display Name`[3],
+      R_TRANSPORTATION_DAILY_LIVING = new_names$`Row Display Name`[4],
+      R_TRANSPORTATION_MEDICAL_APPT = new_names$`Row Display Name`[5]
+    )
+  )
+```
+
+
+# AUDIT
+```{r}
+old_names <- data_wide %>%
+  select(starts_with("R_AUDIT")) %>%
+  names()
+
+new_names <- labels %>%
+  filter(`Row Name` %in% old_names)
+
+
+data_wide %>%
+  # These questions are numbered Q1 through Q3 in the following order
+  select(R_AUDIT_ALCOHOL_FREQUENCY, R_AUDIT_ALCOHOL_STD_DRINKS, R_AUDIT_ALCOHOL_BINGE) %>%
+  mutate(R_AUDIT_ALCOHOL_FREQUENCY = factor(R_AUDIT_ALCOHOL_FREQUENCY,
+    levels = c("Never",
+    "Montly or less",
+    "2-4 times a month",
+    "2-4 times a week",
+    "4 or more times a week"))) %>%
+  tbl_summary(
+    type = list(everything() ~ "categorical"),
+    label = list(
+      R_AUDIT_ALCOHOL_BINGE = "How often do you have six or more drinks on one occasion?",
+      R_AUDIT_ALCOHOL_FREQUENCY = "How often do you have a drink containing alcohol?",
+      R_AUDIT_ALCOHOL_STD_DRINKS  = "How many drinks containing alcohol do you have on a typical day when you are drinking?"
+    
+    )
+
+  )
+```
+
+# Exercise
+```{r}
+data_wide %>%
+  select(starts_with("R_EXERCI")) %>%
+  mutate(R_EXERCISE_MINUTES_PER_DAY = factor(as.numeric(R_EXERCISE_MINUTES_PER_DAY))) %>%
+  tbl_summary(
+    type = list(everything() ~ "categorical")
+  )
+```
+
+# Social Connections Isolation Panel
+```{r}
+old_names <- data_wide %>%
+  select(starts_with("R_SOCIAL")) %>%
+  names()
+
+new_names <- labels %>%
+  filter(`Row Name` %in% old_names)
+
+data_wide %>%
+  select(starts_with("R_SOCIAL")) %>%
+  mutate(across(c(R_SOCIAL_CONNECTIONS_PHONE, R_SOCIAL_CONNECTIONS_GET_TOGETHER), ~ factor(.x, levels = c(
+    "Never",
+    "Once a week",
+    "Twice a week",
+    "Three times a week",
+    "More than three times a week"
+  )))) %>%
+  mutate(R_SOCIAL_CONNECTIONS_MARITAL_STATUS = factor(R_SOCIAL_CONNECTIONS_MARITAL_STATUS, levels = c(
+    "Married",
+    "Widowed",
+    "Divorced",
+    "Separated",
+    "Never married",
+    "Living with partner"))) %>%
+  tbl_summary(
+    type = everything() ~ "categorical",
+    label = list(
+      R_SOCIAL_CONNECTIONS_CLUB_ATTENDANCE = new_names$`Row Display Name`[1],
+      R_SOCIAL_CONNECTIONS_CLUB_MEMBERSHIP = new_names$`Row Display Name`[2],
+      R_SOCIAL_CONNECTIONS_GET_TOGETHER = new_names$`Row Display Name`[3],
+      R_SOCIAL_CONNECTIONS_MARITAL_STATUS = new_names$`Row Display Name`[4],
+      R_SOCIAL_CONNECTIONS_PHONE = new_names$`Row Display Name`[5],
+      R_SOCIAL_CONNECTIONS_RELIGION = new_names$`Row Display Name`[6]
+    )
+  )
+```
+
+# Children's Watch
+```{r}
+old_names <- data_wide %>%
+  select(starts_with("R_CHILDREN")) %>%
+  names()
+
+new_names <- labels %>%
+  filter(`Row Name` %in% old_names)
+
+data_wide %>%
+  select(starts_with("R_CHILDREN")) %>%
+  tbl_summary(
+    type = everything() ~ "categorical",
+    label = list(
+      `R_CHILDREN'S_HEALTHWATCH_HOUSING_HOMELESS` = new_names$`Row Display Name`[1],
+      `R_CHILDREN'S_HEALTHWATCH_HOUSING_MORTGAGE` = new_names$`Row Display Name`[2]
+    )
+  )
+```
+
+# Additional Questions (Questions text TBD)
+```{r}
+data_wide %>%
+  select(R_STRESS_ANXIOUS, R_PAC_B1300) %>%
+  mutate(R_STRESS_ANXIOUS = factor(R_STRESS_ANXIOUS, levels = c(
+    "Not at all",
+    "Only a little",
+    "To some extent",
+    "Rather much",
+    "Very much"))) %>%
+  mutate(R_PAC_B1300 = factor(R_PAC_B1300, levels = c(
+    "Never",
+    "Rarely",
+    "Sometimes",
+    "Often",
+    "Always"))) %>%
+  tbl_summary(
+    label = list(
+      R_STRESS_ANXIOUS = "Do you feel stress - tense, restless, nervous, or anxious, or unable to sleep at night because your mind is troubled all the time - these days?"
+
+    )
+  )
+```
