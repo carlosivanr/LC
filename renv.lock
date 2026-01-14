@@ -464,8 +464,8 @@
       "RemoteUsername": "carlosivanr",
       "RemoteRepo": "dfmtbx",
       "RemoteRef": "master",
-      "RemoteSha": "ef76b9d87579276328d9e6471281246c284dcc85",
-      "Hash": "6f6f30739fa0d6a6d720c233d233059b"
+      "RemoteSha": "7b96af279fc83ed0f2a4ae1a79ca5bcc597b15cc",
+      "Hash": "85922a33c3dabab23e31f3d37cf7b98f"
     },
     "digest": {
       "Package": "digest",

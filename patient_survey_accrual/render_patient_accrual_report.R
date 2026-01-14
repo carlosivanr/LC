@@ -16,7 +16,7 @@ library(stringr)
 # Set file_in to the copied and renamed clinic-specific .qmd file. Serves as
 # an input to the quarto_render() function
 file_in <- here(
-  "patient_survey_accrual/patient_accrual_report.qmd"
+  "patient_survey_accrual/patient_accrual_report_v2.qmd"
 )
 
 # Render the report
@@ -26,7 +26,7 @@ quarto_render(
 
 # Place a copy of the most recent report in the Egnyte folder -----------------
 from <- here(
-  "patient_survey_accrual/patient_accrual_report.docx"
+  "patient_survey_accrual/patient_accrual_report_v2.docx"
 )
 
 print(getwd())

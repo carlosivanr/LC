@@ -84,7 +84,7 @@ rm(demographics, names_data)
 timepoints <- length(table(data$redcap_event_name))
 
 # Send an email as soon as an additional time point is added
-if (timepoints > 4) {
+if (timepoints > 5) {
   # If there are duplicates, notify by email
   library(Microsoft365R)
 
@@ -93,7 +93,7 @@ if (timepoints > 4) {
 
   # Create and send an email
   email <- outlook$create_email(
-    body = "T3 data detected in Long COVID RedCap. Update patient_accrual_report",
+    body = "T5 data detected in Long COVID RedCap. Update patient_accrual_report",
     subject = "Long COVID: New timepoint detected.",
     to = "carlos.i.rodriguez@cuanschutz.edu"
   )
@@ -107,6 +107,7 @@ if (timepoints > 4) {
 ```{r}
 # Identify test records as those with the "test" in the name field OR those
 # with "test record" in the anything else field
+# ids 14, 15, 16, and 18 flagged as test Ids. (CR 12/09/2025)
 test_ids <- 
   data %>%
     filter(
@@ -116,6 +117,7 @@ test_ids <-
 
 # Identify duplicated record_ids as those with "Duplicated record" in the 
 # enrollstatus field
+# Ids 10, 35, 36, 38, flagged as duplicate Ids
 duplicated_ids <- 
   data %>%
     filter(enrollstatus == "Duplicate record") %>%
@@ -259,7 +261,7 @@ data %>%
   )
 ```
 
-# Survey completion rates for T1 and T2 Overall
+# Survey completion rates by time point
 - denominator consists of unique records where patient_consent_form is complete 
 ```{r}
 # Denominator is a complete pre-enrollment form
@@ -280,12 +282,78 @@ consented_ids <-
   filter(patient_consent_form_complete == "Complete") %>%
   pull(record_id)
 
-
-
 # Create a table using the record_ids in denominator ids which are the
 # participants that have a complete patient_enrollment_form this will give
 # the proportion of individuals who have consented and submitted a T1 
 # survey out of those recruited from the clinics to undergo screening.
+
+
+# Get the days since T1 for all consented patients
+days_since_t1 <- data %>%
+  filter(record_id %in% consented_ids, redcap_event_name == "consent_and_t1_sur_arm_1") %>%
+  select(record_id, healthrelated_social_needs_timestamp) %>%
+  mutate(mutate(across(healthrelated_social_needs_timestamp, ~ as.Date(.x)))) %>%
+  mutate(days_since_t1 = as.numeric(Sys.Date() - healthrelated_social_needs_timestamp)) %>%
+  select(record_id, days_since_t1)
+ 
+
+# Get the values of those with missing PASC at T1, since it's the completion of the PASC that
+# triggers the T2 and subsequent surveys.
+incomplete_t1_pasc <- data %>%
+  filter(redcap_event_name == "consent_and_t1_sur_arm_1", pasc_symptoms_and_followup_questions_complete == "Incomplete") %>%
+  select(record_id, pasc_symptoms_and_followup_questions_complete)
+
+# Merge the days since T1 to all rows by record_id
+data <- data %>%
+  left_join(days_since_t1, by = "record_id")
+
+# Create separate data frames
+t1_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "consent_and_t1_sur_arm_1") %>%
+    select(record_id, healthrelated_social_needs_complete) %>%
+    rename(t1_status = healthrelated_social_needs_complete)
+    
+
+t2_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "t2_survey_arm_1") %>% 
+    select(record_id, experiences_with_care_complete) %>%
+    rename(t2_status = experiences_with_care_complete)
+
+
+t3_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "t3_survey_arm_1") %>% 
+    select(record_id, experiences_with_care_complete) %>%
+    rename(t3_status = experiences_with_care_complete)
+
+rates <- t1_rates %>%
+  left_join(t2_rates, by = "record_id") %>%
+  left_join(t3_rates, by = "record_id") %>%
+  left_join(days_since_t1, by = "record_id") %>%
+  mutate(across(t2_status:t3_status, ~ ifelse(record_id %in% incomplete_t1_pasc$record_id, "Incomplete T1 PASC", .x))) %>%
+  mutate(t2_status = ifelse(
+    is.na(t2_status) & days_since_t1 < 90, "Not due for T2", t2_status)) %>%
+  mutate(t2_status = ifelse(
+    is.na(t2_status) & days_since_t1 >= 90 & days_since_t1 < 135, 
+    "Incomplete (within window)", 
+    t2_status)) %>%
+  mutate(t2_status = ifelse(is.na(t2_status) & days_since_t1 >= 35, "Incomplete (past window)", t2_status)) %>%
+  mutate(t3_status = ifelse(
+    is.na(t3_status) & days_since_t1 < 180, "Not due for T3", t3_status))
+
+```
+
+```{r}
+rates %>%
+  select(-record_id, -days_since_t1) %>%
+  tbl_summary()
+```
+
+```{r}
+#| eval: false 
+
+# Older version of displaying the data, the problem is that the experience with care complete column
+# is the same name at each T2- T4 timepoint.
+# To get the 
 tab_t1_t2_rates <- 
   data %>%
   filter(record_id %in% consented_ids) %>%
@@ -323,47 +391,28 @@ tab_t1_t2_rates <-
   ))
 ```
 
+```{r}
+#| eval: false
+# To get the patients that need a nudge for a followup
+tab_t1_t2_rates %>%
+  filter(t2_status == "Incomplete (within window)") %>%
+  select(record_id, experiences_with_care_complete, t2_status)
+```
 
 ```{r}
 # There are two patients in tab_t1_t2_rates, record_ids 17 and 41 that have a partial completion of the T1 survey. Not sure if they will receive an invite for T2.
 ```
 
-## Survey completion rates for T1 by Site Type
+## Survey completion rates by Site Type
 ```{r}
-data %>%
-  filter(
-    record_id %in% consented_ids,
-    redcap_event_name == "consent_and_t1_sur_arm_1"
+rates %>%
+  left_join(
+    data %>% filter(record_id %in% rates$record_id) %>% select(site_type, record_id) %>% distinct(),
+    by = "record_id"
   ) %>%
-  select(healthrelated_social_needs_complete, site_type) %>%
-  tbl_summary(
-    by = site_type,
-    label = list(
-      "healthrelated_social_needs_complete" ~ "Health Related Social Needs Form"
-    )
-    ) 
+  select(t1_status, t2_status, t3_status, site_type) %>%
+  tbl_summary(by = site_type)
 ```
-
-## Survey completion rates for T2 by Site Type
-```{r}
-tab_t1_t2_rates %>%
-  left_join(., data %>% 
-               filter(record_id %in% tab_t1_t2_rates$record_id) %>% 
-               select(site_type, record_id) %>% 
-               group_by(record_id) %>% 
-               slice_head() %>% 
-               ungroup(),
-            by = "record_id") %>%
-  select(-days_since_t1, -experiences_with_care_complete, -record_id, -pasc_symptoms_and_followup_questions_complete) %>%
-  tbl_summary(
-    by = "site_type",
-    label = list(
-      healthrelated_social_needs_complete = "Health Related Social Needs Form (T1)",
-      t2_status = "T2 Status"
-    )
-  )
-```
-
 
 <!-- # Patient Demographics -->
 ```{r}
@@ -390,25 +439,7 @@ data <-
                                TRUE ~ NA_character_
                                ),
          age_group = factor(age_group, levels = c("18-34", "35-64", "65+"), ordered = TRUE)) #%>%
-  # mutate(patient_gender = sample(1:7, n(), replace = TRUE)) %>% # Fabricate data
-  # mutate(patient_gender = case_match(patient_gender, 
-  #                                    1 ~ "Male",
-  #                                    2 ~ "Female",
-  #                                    3 ~ "TransMale",
-  #                                    4 ~ "TransFeml",
-  #                                    5 ~ "Non-Bin",
-  #                                    6 ~ "Other",
-  #                                    7 ~ "PrefNoAnswr")) %>%
-  # # mutate(patient_sexorient = sample(1:8, n(), replace = TRUE)) %>% # Fabricate data                                    
-  # mutate(patient_sexorient = case_match(patient_sexorient, 
-  #                                     1 ~ "Asexl",
-  #                                     2 ~ "Bisexl",
-  #                                     3 ~ "GayLesbn",
-  #                                     4 ~ "Hetero",
-  #                                     5 ~ "Pansexl",
-  #                                     6 ~ "Queer",
-  #                                     7 ~ "SelfDesc",
-  #                                     8 ~ "PrefNoAnswr"))
+ 
 ```
 
 # Patient demographics & characteristics
@@ -433,14 +464,6 @@ data %>%
 data %>%
   select(patient_race___1:patient_race___7, patient_ethn) %>%
   mutate(across(patient_race___1:patient_race___7, ~ factor(.x, levels = c(0, 1)))) %>%
-  # Either columns are renamed, or the labels are set in tbl_summary()
-  # rename("White" = patient_race___5,
-  #        "Black" = patient_race___1,
-  #        "Asian" = patient_race___3,
-  #        "AA/AN" = patient_race___2,
-  #        "Native Hawaiian/Other Pacific Islander" = patient_race___4,
-  #        "Other" = patient_race___6,
-  #        "PrefNoAnswr" = patient_race___7) %>%
   tbl_summary(
     label = list(
       "patient_race___1" ~ "African American or Black",
@@ -465,12 +488,6 @@ data %>%
 ```{r}
 # Patient preferred language
 data %>%
-  # mutate(across(patient_pref_lang, ~ sample(1:4, n(), replace = TRUE))) %>% # Fabricate data
-  # mutate(patient_pref_lang = case_match(patient_pref_lang, 
-  #                                 1 ~ "English",
-  #                                 2 ~ "Spanish",
-  #                                 3 ~ "Other",
-  #                                 4 ~ "PrefNoAnswr")) %>%
   select(patient_pref_lang) %>%
   tbl_summary(
     label = list("patient_pref_lang" ~ "Patient preferred lang.")
@@ -506,18 +523,6 @@ data %>%
 ```{r}
 # Patient education level
 data %>%
-  # mutate(across(patient_school, ~ sample(1:9, n(), replace = TRUE))) %>% # Fabricate data
-  # mutate(patient_school = case_match(patient_school, 
-  #                                 1 ~ "No schooling completed",
-  #                                 2 ~ "Nursery school to 8th grade",
-  #                                 3 ~ "Some high school, no diploma",
-  #                                 4 ~ "	High school graduate, diploma or the equivalent (for example: GED)",
-  #                                 5 ~ "Some college credit, no degree",
-  #                                 6 ~ "Associate degree",
-  #                                 7 ~ "Bachelor's degree",
-  #                                 8 ~ "Master's degree",
-  #                                 9 ~ "Professional or Doctorate degree"
-  #                                 )) %>%
   select(patient_school) %>%
   tbl_summary(
     label = list(patient_school ~ "Patient education level")
@@ -527,15 +532,6 @@ data %>%
 ## Patient marital status
 ```{r}
 data %>%
-  # mutate(across(patient_marital, ~ sample(1:6, n(), replace = TRUE))) %>% # Fabricate data
-  # mutate(patient_marital = case_match(patient_marital, 
-  #                                 1 ~ "Single",
-  #                                 2 ~ "In a relationship",
-  #                                 3 ~ "Married",
-  #                                 4 ~ "Divorced/Separated",
-  #                                 5 ~ "Widowed",
-  #                                 6 ~ "Other (please describe)"
-  #                                 )) %>%
   select(patient_marital) %>%
   tbl_summary(
     label = list(patient_marital ~ "Patient marital status")

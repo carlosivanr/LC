@@ -1,5 +1,5 @@
 ---
-title: "EHR SDOH C3924_T3 2024-04-17"
+title: "EHR SDOH C4168_T3 2025-11-20"
 
 date: "`r format(Sys.Date(), '%m-%d-%Y')`"
 
@@ -23,55 +23,80 @@ execute:
 
 ```{r, message=FALSE, warning=FALSE}
 library(magrittr, include = "%<>%")
+library(tidyverse)
+library(gtsummary)
 library(dfmtbx)
-
-pacman::p_load(
-  tidyverse,
-  gtsummary
-)
 ```
 
 
 ```{r}
 # Load data
-data <- read_csv(file = "D:\\long_covid\\sdoh\\C3924_T3_SDOH_20250417_AHRQ.csv",
+# data <- read_csv(file = "D:\\long_covid\\sdoh\\C3924_T3_SDOH_20250417_AHRQ.csv",
+#   show_col_types = FALSE)
+
+data <- read_csv(file = "D:\\long_covid\\sdoh\\data\\C4168_T3_SDOH_20251120.csv",
+  show_col_types = FALSE)
+
+# Load dictionary for question text to flowsheet name
+labels <- read_csv(file = "D:\\long_covid\\sdoh\\data\\SOCIAL DRIVERS FLOWSHEET VALUE.csv",
   show_col_types = FALSE)
 ```
 
 ```{r}
-# Load dictionary for question text to flowsheet name
-labels <- read_csv(file = "D:\\long_covid\\sdoh\\SOCIAL DRIVERS FLOWSHEET VALUE.csv",
+demographics <- read_csv(file = "D:\\long_covid\\sdoh\\data\\C4167_Table1_Demographics.csv",
   show_col_types = FALSE)
+
+# Filter demographics to participants available in the flowsheet data
+demographics %<>%
+  filter(Pt_MDC %in% data$arb_person_id)
 ```
 
 ```{r}
 #| eval: false
 
-labels %>% drop_na()
+# labels %>% drop_na()
 
-labels %>%
-  # mutate(across(everything(), ~ sub("\\[.*", "", .x))) %>%
-  # mutate(across(everything(), ~ str_trim(.x, side = "right"))) %>%
-  mutate(across(`Row Name`, ~ str_replace_all(.x, " ", "_")))
+# labels %>%
+#   # mutate(across(everything(), ~ sub("\\[.*", "", .x))) %>%
+#   # mutate(across(everything(), ~ str_trim(.x, side = "right"))) %>%
+#   mutate(across(`Row Name`, ~ str_replace_all(.x, " ", "_")))
 
-write_csv(labels, "D:\\long_covid\\sdoh\\SOCIAL DRIVERS FLOWSHEET VALUE.csv")
+# write_csv(labels, "D:\\long_covid\\sdoh\\SOCIAL DRIVERS FLOWSHEET VALUE.csv")
 ```
 
-## Unique participants
+# Unique participants from flowsheet data
 ```{r}
 data %>%
   summarise(n = n_distinct(arb_person_id)) %>%
   gt::gt()
 ```
 
-## Unique number of flowsheet row names (questions)
+# Unique number of flowsheet row names (questions)
 ```{r}
 data %>%
   summarise(n = n_distinct(flowsheet_row_name)) %>%
   gt::gt()
 ```
 
-## Frequencies & proportions for flowsheet row names (questions)
+# Demographics of unique participants in flowsheet data
+
+```{r}
+demographics %>%
+  mutate(Pt_Age = case_when(
+    Pt_Age %in% c("21 to 25", "26 to 30", "31 to 35", "36 to 40") ~ "21 to 40",
+    Pt_Age %in% c("41 to 45", "46 to 50", "51 to 55", "56 to 60") ~ "41 to 60",
+    .default = "61 to 85"
+  )) %>%
+  select(Pt_Age, Pt_Sex, Pt_Gender, Pt_Ethnicity, Pt_Race, Pt_language, Pt_Insurance_type) %>%
+  tbl_summary()
+```
+
+```{r}
+
+```
+
+
+# Frequencies & proportions for flowsheet row names (questions)
 
 ```{r}
 unique_qs <- data %>% distinct(flowsheet_row_name) %>% pull()
@@ -83,7 +108,6 @@ data_wide <- data %>%
   pivot_wider(names_from = flowsheet_row_name, values_from = VALUE) %>%
   ungroup()
 ```
-
 
 ```{r}
 # Prepare data
@@ -253,9 +277,15 @@ data_wide %>%
 ```{r}
 data_wide %>%
   select(starts_with("R_EXERCI")) %>%
-  mutate(R_EXERCISE_MINUTES_PER_DAY = factor(as.numeric(R_EXERCISE_MINUTES_PER_DAY))) %>%
+  # mutate(R_EXERCISE_MINUTES_PER_DAY = factor(as.numeric(R_EXERCISE_MINUTES_PER_DAY))) %>%
+  mutate(across(everything(), ~ as.numeric(.x))) %>%
   tbl_summary(
-    type = list(everything() ~ "categorical")
+    # type = list(everything() ~ "categorical"),
+    type = list(everything() ~ "continuous"),
+    label = list(
+      R_EXERCISE_DAYS_PER_WEEK = "On average, how many days per week do you engage in moderate to strenuous exercise (like a brisk walk)?",
+      R_EXERCISE_MINUTES_PER_DAY = "On average, how many minutes do you engage in exercise at this level?"),
+    statistic = list(everything() ~ "{mean} ({sd}; [{min}, {median}, {max}])")
   )
 ```
 
@@ -297,7 +327,7 @@ data_wide %>%
   )
 ```
 
-# Children's Watch
+# Children's HealthWatch Survey
 ```{r}
 old_names <- data_wide %>%
   select(starts_with("R_CHILDREN")) %>%
@@ -312,12 +342,13 @@ data_wide %>%
     type = everything() ~ "categorical",
     label = list(
       `R_CHILDREN'S_HEALTHWATCH_HOUSING_HOMELESS` = new_names$`Row Display Name`[1],
-      `R_CHILDREN'S_HEALTHWATCH_HOUSING_MORTGAGE` = new_names$`Row Display Name`[2]
+      `R_CHILDREN'S_HEALTHWATCH_HOUSING_MORTGAGE` = new_names$`Row Display Name`[2],
+      `R_CHILDREN'S_HEALTHWATCH_HOUSING_TIMES_MOVED` = "In the past 12 months, how many times have you moved where you were living?"
     )
   )
 ```
 
-# Additional Questions (Questions text TBD)
+# Additional Questions
 ```{r}
 data_wide %>%
   select(R_STRESS_ANXIOUS, R_PAC_B1300) %>%
@@ -335,8 +366,8 @@ data_wide %>%
     "Always"))) %>%
   tbl_summary(
     label = list(
-      R_STRESS_ANXIOUS = "Do you feel stress - tense, restless, nervous, or anxious, or unable to sleep at night because your mind is troubled all the time - these days?"
-
+      R_STRESS_ANXIOUS = "Do you feel stress - tense, restless, nervous, or anxious, or unable to sleep at night because your mind is troubled all the time - these days?",
+      R_PAC_B1300 = "How often do you need to have someone help you when you read instructions, pamphlets, or other written material from your doctor or pharmacy?"
     )
   )
 ```

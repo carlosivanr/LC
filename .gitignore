@@ -10,3 +10,8 @@ scripts/participant_tracking_report.html
 *.docx
 *.html
 *.log
+*.xlsx
+*.csv
+*.pptx
+*.pdf
+*.gitignore
