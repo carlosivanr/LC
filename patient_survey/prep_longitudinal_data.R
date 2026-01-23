@@ -7,7 +7,7 @@
 # Description - This script is designed to download, prep and clean the RedCap
 # data from the AHRQ Long COVID project.
 
-# This script is part 1 of 3 in a series of code files that produce reports
+# This script is part 1 of 2 in a series of code files that produce reports
 # for the patient survey data.
 
 # -----------------------------------------------------------------------------
@@ -24,6 +24,41 @@ library(dfmtbx)
 # Pull report 176060 as labeled data
 # Corresponds to patient_enrollment report in REDCap
 data <- pull_redcap_report(Sys.getenv("LC_patient"), "176060", "label", "raw", "true")
+
+
+# Names of the promis items for T1 and T5
+data %>% 
+  select(starts_with("promis")) %>% 
+  select(
+    -ends_with("v2"), 
+    -ends_with("timestamp"), 
+    -promis_record_id,
+    -ends_with("complete"))%>% 
+  names()
+
+# Names of promis items for T2 - T4
+data %>% 
+  select(starts_with("promis")) %>% 
+  select(
+    ends_with("v2"), 
+    # -ends_with("timestamp"), 
+    -promis_record_id,
+    -ends_with("complete"))%>% 
+  names()
+
+# T2-T4 Questions:
+# 1 - In general, would you say your health is
+# 2 - In general, would you say your quality of life is
+# 3 - In general, how would you rate your physical health?
+# 4 - In general, how would you rate your mental health, including your mood and your ability to think?
+# 5 - In general, how would you rate your satisfaction with your social activities and relationships?
+# 6 - In general, please rate how well you carry out your usual social activities and roles. (This includes activities at home, at work and in your community, and responsibilities as a parent, child, spouse, employee, friend, etc.)
+# 7 -	To what extent are you able to carry out your everyday physical activities such as walking, climbing stairs, carrying groceries, or moving a chair?
+# bothered
+# fatigue
+# pain
+# n.b. These seem to have the same questions, but are entered as different fields in redcap. Not sure why.
+
 
 # Capture the column names
 names_data <- names(data)
@@ -171,14 +206,61 @@ data %<>%
 # In addition, labeled variables are converted to numerical for the calculation
 # of the raw scores, and other variables are cleaned up
 
+# Harmonize the names between the t1/t5 instrument and the t2-t4 
+# instrument.
+
+# Get the names of the t2-t4 variables
+t2_t4_promis_names <- data %>%
+  select(promis_global01_v2:avg_pain_v2) %>%
+  names()
+
+# Capture the t2-t4 variables and rename them
+t2_t4_promis <- data %>%
+  filter(!redcap_event_name %in% c("t1", "t5")) %>%
+  select(record_id, redcap_event_name, promis_global01_v2:avg_pain_v2) %>%
+  rename(
+    promis_global01 = promis_global01_v2,
+    promis_global02 = promis_global02_v2,
+    promis_global03 = promis_global03_v2,
+    promis_global04 = promis_global04_v2,
+    promis_global05 = promis_global05_v2,
+    promis_global06 = promis_global07_v2,
+    promis_global07r = avg_pain_v2,
+    promis_global08r = avg_fatigue_v2,
+    promis_global09r = promis_global06_v2,
+    promis_global10r = bothered_v2)
+
+# Remove the t2-t4 variable names, since they will no longer be needed
 data %<>%
-  # select(promis_global01:avg_pain) %>%
+  select(-(all_of(t2_t4_promis_names)))
+
+
+# Rename the t1/t5 variable names, to perform a left join
+data %<>%
   rename(
     promis_global09r = promis_global06,
     promis_global06 = promis_global07,
     promis_global10r = bothered,
     promis_global08r = avg_fatigue,
-    promis_global07r = avg_pain) %>%
+    promis_global07r = avg_pain)
+
+# Merge in the t2-t4 variables by id and event
+# To properly merge the data, first drop all of the promis t1/t5 columns from
+# the data frame to merge into, then create a separate data frame where the 
+# t1/t5 columns are stacked with the t2-t4 columns, then merge by record_id
+# and timepoint to avoid duplicately named columns.
+data <- left_join(
+    data %>% select(-(promis_global01:promis_global07r)),
+    bind_rows(
+      data %>% filter(redcap_event_name %in% c("t1", "t5")) %>% select(record_id, redcap_event_name, promis_global01:promis_global07r),
+      t2_t4_promis),
+    by = c("record_id", "redcap_event_name")
+  )
+
+
+
+# Clean up and score the promis variables for all timepoints
+data %<>%
   mutate(across(promis_global02:promis_global05, ~ as.numeric(substr(.x, 1, 1)))) %>%
   mutate(promis_global06 = as.numeric(substr(promis_global06, 1, 1))) %>%
   mutate(promis_global07r = case_match(
@@ -235,6 +317,22 @@ data %<>%
   ) %>%
   rename(promis_mht = "T-Score")
 
+# Check the promis data for missing values
+View(data %>%
+  filter(redcap_event_name == "t1") %>%
+  select(promis_pht, promis_mht))
+
+# Add a piece of code to determine the number of missing values in the promis
+data %>% select(starts_with("promis")) %>% names()
+
+
+promis_n_missing <- 
+  data %>%
+  # filter(redcap_event_name == "t1") %>%
+  select(record_id, redcap_event_name, promis_global02:promis_global07r, -promis_global09r) %>%
+  mutate(n_miss_pht = rowSums(is.na(across(c(promis_global07r, promis_global06, promis_global03, promis_global08r))))) %>%
+  mutate(n_miss_mht = rowSums(is.na(across(c(promis_global02, promis_global04, promis_global05, promis_global10r)))))
+
 
 # PASC ------------------------------------------------------------------------
 # These are the 12 symptoms used to calculate a PASC score
@@ -255,39 +353,56 @@ pasc_symptoms <- c(
 # These are the weights to multiply each binary symptom value
 pasc_symptom_scores <- c(8, 7, 4, 3, 3, 2, 2, 1, 1, 1, 1, 1)
 
+# Harmonize ps_ptpasc variable -----------------------------------------------
+data <- left_join(
+  data %>% select(-ps_ptpasc, -ps2_ptpasc),
+  bind_rows(
+    data %>%
+      filter(redcap_event_name %in% c("t1", "t5")) %>%
+      select(record_id, redcap_event_name, ps_ptpasc),
 
-# -----------------------------------------------------------------------------
+    data %>%
+      filter(!redcap_event_name %in% c("t1", "t5")) %>%
+      select(record_id, redcap_event_name, ps2_ptpasc) %>%
+      rename(ps_ptpasc = ps2_ptpasc)
+  ),
+  by = c("record_id", "redcap_event_name")
+)
+
+# Harmonize the pasc symptom variables  ---------------------------------------
 # Create a separate data frame of the t1 pasc variables since they are named
 # differently than the subsequent time points
-t1_pasc <- 
-  data %>% 
-  filter(redcap_event_name == "t1") %>%
+pasc_v1 <- 
+  data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
   select(record_id, redcap_event_name, starts_with("ps"), -starts_with("ps2"))
-
 
 # Create a separate data frame of the non-t1 pasc variables and then rename the
 # columns for harmonization. This will contain time points beyond t1.
-t2_pasc <- 
+pasc_v2 <- 
   data %>% 
-  filter(redcap_event_name != "t1") %>%
-  select(record_id, redcap_event_name, starts_with("ps2"))
+  filter(!redcap_event_name %in% c("t1", "t5")) %>%
+  select(record_id, redcap_event_name, starts_with("ps2"), ps_ptpasc)
 
-t2_pasc_names <- names(t2_pasc)
+pasc_v2_names <- names(pasc_v2)
 
-new_t2_pasc_names <- str_replace(t2_pasc_names, "ps2_", "ps_")
+new_pasc_v2_names <- str_replace(pasc_v2_names, "ps2_", "ps_")
 
-names(t2_pasc) <- new_t2_pasc_names
+names(pasc_v2) <- new_pasc_v2_names
 
 
 # Stack the two subsets together in one data frame for scoring
-pasc_scores <- bind_rows(t1_pasc, t2_pasc)
+pasc_variables <- 
+  bind_rows(pasc_v1, pasc_v2) %>% 
+  select(record_id, redcap_event_name, ps_ptpasc, everything())
+
 
 # Create a data frame of the scores, subset to only those that responded "Yes"
 # to ps_ptpasc
-pasc_scores <- pasc_scores %>%
+pasc_scores <- pasc_variables %>%
   filter(ps_ptpasc == "Yes") %>%
   bind_cols(
-    (pasc_scores %>%
+    (pasc_variables %>%
       filter(ps_ptpasc == "Yes") %>%
       select(all_of(pasc_symptoms)) %>%
       mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes"), 1, 0))) %>%
@@ -386,52 +501,113 @@ pasc_sx_means <- bind_rows(
   summarise(mean = mean(response, na.rm = TRUE), .groups = "drop")
 
 
-# Stigma score ----------------------------------------------------------------
-# Calculated as the mean of the item serious_pcc through talk_pcc for those
-# that selected "Yes" to pcc_appts only. If more the 2 of the items are missing
-# then the score is set to NA.
-data <- bind_cols(
-  data,
-  (data %>%  
-  # filter(pcc_appts == "Yes") %>% # Removed to use bind_cols() instead of a 
-    # left_join() approach.
-  select(serious_pcc:talk_pcc) %>%
-  mutate(across(everything(), ~ case_match(.x, 
-      "Never" ~ 1,
-      "Rarely" ~ 2,
-      "Sometimes" ~ 3, 
-      "Often" ~ 4,
-      "Very Often" ~ 5,
-      .default = NA))) %>%
-  mutate(na_counts = rowSums(is.na(across(everything())))) %>%   
-  mutate(stigma_score = rowMeans(across(serious_pcc:talk_pcc), na.rm = TRUE)) %>%
-  mutate(stigma_score = ifelse(na_counts >= 2, NA, stigma_score)) %>%
-  select(-na_counts, -(serious_pcc:talk_pcc)) # These columns are removed 
-    # because the na_counts isn't needed, and the categorical responses are
-    # needed for tabulation of individual questions.
-  )
+# Experiences of Stigma (Illness Invalidation Inventory) ----------------------
+# Have you had one or more appointments with medical providers at a primary 
+# care clinic in the past three months?
+
+
+# Consolidate the pcc_appts and appt_pcc variables into one column. These 
+# variables only differ in when they were administered (t1/t5, vs t2-t4) 
+# respectively.
+data <- left_join(
+  data %>% select(-pcc_appts, -appt_pcc),
+  bind_rows(
+    # Capture T1 and T5 rows only
+    data %>%
+      filter(redcap_event_name %in% c("t1", "t5")) %>%
+      select(record_id, redcap_event_name, pcc_appts),
+
+    # Capture rows NOT in T1 and T5
+    data %>%
+      filter(!redcap_event_name %in% c("t1", "t5")) %>%
+      select(record_id, redcap_event_name, appt_pcc) %>%
+      rename(pcc_appts = appt_pcc)
+  ),
+  by = c("record_id", "redcap_event_name")
 )
 
-# Mean score of "lack of understanding" scale from Illness Invalidation -------
-# Inventory for MDC
-data <- bind_cols(
-  data,
-  (data %>%
-  # filter(mdc_appts == "Yes") %>%
-  select(serious_mdc:talk_mdc) %>%
-  mutate(across(everything(), ~ case_match(.x, 
+# Similarly, consolidate the mdc_appts and appt_mdc variables into one column.
+data <- left_join(
+  data %>% select(-mdc_appts, -appt_mdc),
+  bind_rows(
+    # Capture T1 and T5 rows only
+    data %>%
+      filter(redcap_event_name %in% c("t1", "t5")) %>%
+      select(record_id, redcap_event_name, mdc_appts),
+
+    # Capture rows NOT in T1 and T5
+    data %>%
+      filter(!redcap_event_name %in% c("t1", "t5")) %>%
+      select(record_id, redcap_event_name, appt_mdc) %>%
+      rename(mdc_appts = appt_mdc)
+  ),
+  by = c("record_id", "redcap_event_name")
+)
+
+
+# Lack of understanding scale - Only asked at T1/T5, but is asked along two 
+# dimensions, with respect to experiences at PCCs and experiences at MDCs.
+# Calculated as the mean of the item serious_pcc through talk_pcc for those
+# that selected "Yes" to pcc_appts only. If more than 2 of the items are 
+# missing then the score is set to NA.
+
+# n.b. These questions are stacked together to facilitate scores
+iii_data <- bind_rows(
+  data %>%
+    filter(pcc_appts == "Yes", (redcap_event_name %in% c("t1", "t5"))) %>%
+    select(record_id, redcap_event_name, serious_pcc:talk_pcc) %>%
+    rename(
+      serious = serious_pcc,
+      consequences = consequences_pcc,
+      talk = talk_pcc) %>%
+    mutate(lack_ref = "pcc"),
+
+  data %>%
+    filter(mdc_appts == "Yes", (redcap_event_name %in% c("t1", "t5"))) %>%
+    select(record_id, redcap_event_name, serious_mdc:talk_mdc) %>%
+    rename(
+      serious = serious_mdc,
+      consequences = consequences_mdc,
+      talk = talk_mdc) %>%
+    mutate(lack_ref = "mdc")
+)
+
+iii_data <- bind_cols(
+  iii_data,
+  iii_data %>%
+  mutate(across(serious:talk, ~ case_match(.x, 
       "Never" ~ 1,
       "Rarely" ~ 2,
       "Sometimes" ~ 3, 
       "Often" ~ 4,
       "Very Often" ~ 5,
       .default = NA))) %>%
-  mutate(na_counts = rowSums(is.na(across(everything())))) %>%   
-  mutate(undrstn_score = rowMeans(across(serious_mdc:talk_mdc), na.rm = TRUE)) %>%
-  mutate(undrstn_score = ifelse(na_counts >= 2, NA, undrstn_score)) %>%
-  select(-na_counts, -(serious_mdc:talk_mdc))
-  )
+  mutate(na_counts = rowSums(is.na(across(serious:talk)))) %>%   
+  mutate(score = rowMeans(across(serious:talk), na.rm = TRUE)) %>%
+  mutate(score = ifelse(na_counts >= 2, NA, score)) %>%
+  select(score))
+
+# Merge the lou_pcc scores
+data <- left_join(
+  data,
+  iii_data %>%
+    filter(lack_ref == "pcc") %>%
+    select(record_id, redcap_event_name, score) %>%
+    rename(lou_pcc = score),
+  by = c("record_id", "redcap_event_name")
 )
+
+
+# Merge the lou_mdc scores
+data <- left_join(
+  data,
+  iii_data %>%
+    filter(lack_ref == "mdc") %>%
+    select(record_id, redcap_event_name, score) %>%
+    rename(lou_mdc = score),
+  by = c("record_id", "redcap_event_name")
+)
+
 
 # Health Related Social Needs -------------------------------------------------
 ## Problems
@@ -454,7 +630,7 @@ hrsn_data <-
     redcap_event_name,
     living_sit:lonely) %>%
   filter(
-    redcap_event_name == "consent_and_t1_sur_arm_1", 
+    redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1"),
     promis_record_id %in% (data %>% filter(redcap_event_name == "t1") %>% pull(record_id)))
 
 # Recode the numerical values into binary values according to scoring guide
@@ -476,3 +652,13 @@ hrsn_data %<>%
 # Calculate the hrsn_need_score
 hrsn_data %<>%
   mutate(hrsn_need_score = rowSums(across(c(living_need, food_need, transport, utlities, fin_strain, social_need))))
+
+
+# Experiences with Care -------------------------------------------------------
+# explain_pcc
+# listen_pcc
+# respect_pcc
+# time_pcc
+# medinfo_pcc
+# test_pcc
+# results_pcc
