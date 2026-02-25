@@ -13,6 +13,16 @@ execute:
   echo: false
 ---
 
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz, Dept. of Family Medicine
+
+# Long COVID - Patient Accrual Report
+
+# This file is designed to generate a report indicating which patients have 
+# completed their surveys in teh AHRQ Long COVID project.
+```
+
 ```{r, message=FALSE, warning=FALSE}
 library(magrittr, include = "%<>%")
 
@@ -80,11 +90,20 @@ rm(demographics, names_data)
 
 
 ```{r}
-# Determine how many time points are available. As of 09/29/2025, 4 unique time points
+# Determine how many time points are available. As of 09/29/2025, 
+# There are 7 unique time points
+# The first 2 are housekeeping
+# 1. patient_pre_enrollm_arm_1
+# 2. screening_and_enro_arm_1
+# 3. consent_and_t1_sur_arm_1
+# 4. t2_survey_arm_1
+# 5. t3_survey_arm_1
+# 6. t4_survey_arm_1
+# 7. t5_survey_arm_1
 timepoints <- length(table(data$redcap_event_name))
 
 # Send an email as soon as an additional time point is added
-if (timepoints > 5) {
+if (timepoints > 6) {
   # If there are duplicates, notify by email
   library(Microsoft365R)
 
@@ -93,7 +112,7 @@ if (timepoints > 5) {
 
   # Create and send an email
   email <- outlook$create_email(
-    body = "T5 data detected in Long COVID RedCap. Update patient_accrual_report",
+    body = "T5 data detected in Long COVID RedCap. Update patient_accrual_report_v2.qmd in D:\\long_covid\\patient_survey_accrual\\patient_accrual_report_v2.qmd",
     subject = "Long COVID: New timepoint detected.",
     to = "carlos.i.rodriguez@cuanschutz.edu"
   )
@@ -108,24 +127,57 @@ if (timepoints > 5) {
 # Identify test records as those with the "test" in the name field OR those
 # with "test record" in the anything else field
 # ids 14, 15, 16, and 18 flagged as test Ids. (CR 12/09/2025)
-test_ids <- 
+# ids, 64, 65 flagged as test ids. (CR 2/23/2026)
+test_ids <-
   data %>%
     filter(
       grepl("test", name, ignore.case = TRUE) | 
-      grepl("test record", anythingelse, ignore.case = TRUE)) %>%
+      grepl("test record", anythingelse, ignore.case = TRUE) |
+      grepl("test", study_label, ignore.case = TRUE)
+      ) %>%
     pull(record_id)
+
 
 # Identify duplicated record_ids as those with "Duplicated record" in the 
 # enrollstatus field
 # Ids 10, 35, 36, 38, flagged as duplicate Ids
+# Id 69 flagged as duplicate (02/23/2026)
 duplicated_ids <- 
   data %>%
-    filter(enrollstatus == "Duplicate record") %>%
+    filter(
+      grepl("duplicate", enrollstatus, ignore.case = TRUE) |
+      grepl("duplicate", study_label, ignore.case = TRUE)
+      ) %>%
     pull(record_id)
+
+
 
 # Remove the test and duplicated ids
 data %<>%
   filter(!record_id %in% c(test_ids, duplicated_ids))
+
+
+# Capture those that completed the enrollment step
+enrollment_completed_ids <- data %>%
+  filter(enrollstatus == "Enrollment completed") %>%
+  pull(record_id)
+
+
+# ids flagged as loss to follow up
+ltfu_ids <- data %>%
+  filter(grepl("ltfu", study_label, ignore.case = TRUE)) %>%
+  pull(record_id)
+
+data %<>%
+  mutate(enrollstatus = ifelse(record_id %in% ltfu_ids, "LTFU", enrollstatus))
+
+# Ids that declined
+declined_ids <- data %>%
+  filter(grepl("declined", study_label, ignore.case = TRUE)) %>%
+  pull(record_id)
+
+data %<>%
+  mutate(enrollstatus = ifelse(record_id %in% declined_ids, "Declined", enrollstatus))
 ```
 
 ```{r}
@@ -205,41 +257,35 @@ tab_data <- data %>%
   fill(enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, .direction = "updown") %>%
   slice_head() %>%
   ungroup() %>%
-  # This section placed here to match Izzy's definitions
-  # mutate(
-  #   enrollstatus = ifelse(
-  #     record_id %in% c(4, 22, 26, 30), 
-  #     "Enrollment completed", 
-  #     enrollstatus)) %>%
-  # mutate(
-  #   patient_consent_form_complete = ifelse(
-  #     record_id %in% c(4, 22, 26, 30), 
-  #     NA, patient_consent_form_complete)) %>%
-  
   # Convert missing values in enrollstatus to Unknown/ could be not yet screened or contacted but no response
   mutate(
-    across(enrollstatus:healthrelated_social_needs_complete, ~ ifelse(is.na(.x), "Unknown", .x)))
+    across(healthrelated_social_needs_complete, ~ ifelse(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(enrollstatus, ~ ifelse(is.na(.x), "TBD", .x))) %>%
+  mutate(across(patient_consent_form_complete, ~ ifelse(is.na(.x), "Incomplete", .x)))
 
-  # This was an older version, but it may be more clearer if the variables are not binarized
-  # mutate(
-  #   across(
-  #     enrollstatus:healthrelated_social_needs_complete, 
-  #     ~ ifelse(grepl("Incomplete", .x, ignore.case = TRUE), 0, .x)),
-  #   across(
-  #     enrollstatus:healthrelated_social_needs_complete, 
-  #     ~ ifelse(grepl("complete", .x, ignore.case = TRUE), 1, 0)),
-  # ) 
+```
+
+```{r}
+#| eval: false
+
+# What would study_label look like if tabulated
+data %>%
+  select(study_label) %>%
+  drop_na() %>%
+  tbl_summary()
 ```
 
 # Screened and consented patients
-- Total unique patients: Total number of number of unique record ids excluding test and duplicated records found in RedCap.
+- Total unique patients: Total number of unique record ids excluding test and duplicated records found in RedCap.
 ```{r}
 tab_data %>%
   select(-record_id, -healthrelated_social_needs_complete) %>%
+  # select(enrollstatus) %>%
   tbl_summary(
     label = list(
       enrollstatus ~ "RedCap field: enrollstatus",
-      patient_consent_form_complete ~ "RedCap field: patient consent form complete")
+      patient_consent_form_complete ~ "RedCap field: patient consent form complete"
+      )
   ) %>%
   modify_header(label = "**Total unique patients**")
 ```
@@ -266,9 +312,10 @@ data %>%
 ```{r}
 # Denominator is a complete pre-enrollment form
 # T1 Numerator is a complete health related social needs form at consent_and_t1_sur_arm_1
-# T2 Numerator is a complete Experiences with care t2_survey_arm_1
-# T3 Numerator is a complete Experiences with care t3_survey_arm_1
-# T4 Numerator is a complete Experiences with care t4_survey_arm_1
+# T2 Numerator is a complete Experiences with care at t2_survey_arm_1
+# T3 Numerator is a complete Experiences with care at t3_survey_arm_1
+# T4 Numerator is a complete Experiences with care at t4_survey_arm_1
+# T5 Numerator is a complete health related social needs form at t5_survey_arm_1
 ```
 
 ```{r}
@@ -297,8 +344,8 @@ days_since_t1 <- data %>%
   select(record_id, days_since_t1)
  
 
-# Get the values of those with missing PASC at T1, since it's the completion of the PASC that
-# triggers the T2 and subsequent surveys.
+# Get the values of those with a missing PASC at T1, since it's the completion 
+# of the PASC that triggers the T2 and subsequent surveys.
 incomplete_t1_pasc <- data %>%
   filter(redcap_event_name == "consent_and_t1_sur_arm_1", pasc_symptoms_and_followup_questions_complete == "Incomplete") %>%
   select(record_id, pasc_symptoms_and_followup_questions_complete)
@@ -307,7 +354,7 @@ incomplete_t1_pasc <- data %>%
 data <- data %>%
   left_join(days_since_t1, by = "record_id")
 
-# Create separate data frames
+# Create separate data frames for each time point
 t1_rates <- data %>%
     filter(record_id %in% consented_ids, redcap_event_name == "consent_and_t1_sur_arm_1") %>%
     select(record_id, healthrelated_social_needs_complete) %>%
@@ -325,20 +372,72 @@ t3_rates <- data %>%
     select(record_id, experiences_with_care_complete) %>%
     rename(t3_status = experiences_with_care_complete)
 
-rates <- t1_rates %>%
+
+t4_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "t4_survey_arm_1") %>% 
+    select(record_id, experiences_with_care_complete) %>%
+    rename(t4_status = experiences_with_care_complete)
+
+
+
+rates <- 
+  t1_rates %>%
   left_join(t2_rates, by = "record_id") %>%
   left_join(t3_rates, by = "record_id") %>%
+  left_join(t4_rates, by = "record_id") %>%
   left_join(days_since_t1, by = "record_id") %>%
-  mutate(across(t2_status:t3_status, ~ ifelse(record_id %in% incomplete_t1_pasc$record_id, "Incomplete T1 PASC", .x))) %>%
+  # filter(record_id == 3) %>% # !!! Coment out after troubleshooting
+  mutate(across(t2_status:t4_status, ~ ifelse(record_id %in% incomplete_t1_pasc$record_id, "Incomplete T1 PASC", .x))) %>%
+  
+  # If the value is missing AND the days since t1 is less than 90, then the 
+  # paticipant isn't due for a T2 yet, they haven't been in the study for
+  # long enough
   mutate(t2_status = ifelse(
     is.na(t2_status) & days_since_t1 < 90, "Not due for T2", t2_status)) %>%
+
+  # If the value is missing and the days since the T1 is between 90 and 135, 
+  # then the patient is within the time window allowed in RedCap to submit a
+  # survey
   mutate(t2_status = ifelse(
-    is.na(t2_status) & days_since_t1 >= 90 & days_since_t1 < 135, 
-    "Incomplete (within window)", 
+      is.na(t2_status) & days_since_t1 >= 90 & days_since_t1 < 104, 
+      "Incomplete (within window)", 
+      t2_status)) %>%
+
+  # If the value is missing OR "Incomplete" AND the days since T1 is then the
+  # patient is outside of the window allowed in RedCap and the value is missing
+  mutate(t2_status = ifelse(
+    (is.na(t2_status) | t2_status == "Incomplete") & days_since_t1 >= 104, 
+    "Incomplete (past window)", 
     t2_status)) %>%
-  mutate(t2_status = ifelse(is.na(t2_status) & days_since_t1 >= 35, "Incomplete (past window)", t2_status)) %>%
+
+  # Modify t3 status ----------------------------------------------------------
+  # The same manipulation for t2 are repeated here but with t3
   mutate(t3_status = ifelse(
-    is.na(t3_status) & days_since_t1 < 180, "Not due for T3", t3_status))
+    is.na(t3_status) & days_since_t1 < 180, "Not due for T3", t3_status)) %>%
+
+  mutate(t3_status = ifelse(
+    is.na(t3_status) & days_since_t1 >= 180 & days_since_t1 < 194, 
+    "Incomplete (within window)", 
+    t3_status)) %>%
+
+  mutate(t3_status = ifelse(
+    (is.na(t3_status) | t3_status == "Incomplete") & days_since_t1 >= 194, 
+    "Incomplete (past window)", 
+    t3_status)) %>%
+  
+  # Modify t4 status ----------------------------------------------------------
+  mutate(t4_status = ifelse(
+    is.na(t4_status) & days_since_t1 < 270, "Not due for T4", t4_status)) %>%
+
+  mutate(t4_status = ifelse(
+  is.na(t4_status) & days_since_t1 >= 270 & days_since_t1 < 284, 
+  "Incomplete (within window)", 
+  t4_status)) %>%
+
+  mutate(t4_status = ifelse(
+    (is.na(t4_status) | t4_status == "Incomplete") & days_since_t1 >= 284, 
+    "Incomplete (past window)", 
+    t4_status))
 
 ```
 
@@ -404,13 +503,16 @@ tab_t1_t2_rates %>%
 ```
 
 ## Survey completion rates by Site Type
+* Those with an Incomplete T1 PASC were not administered subsequent surveys because completion of the T1 triggers subsequent invites
+* Incomplete (past window) indicates a participant that was invited so submit a survey, but did not do so within 14 days of the invite
+* Incomplete (within windows) indicates a participant that was invited to submit a survey, but is still within 14 days of invite and is eligible to submit a survey.
 ```{r}
 rates %>%
   left_join(
     data %>% filter(record_id %in% rates$record_id) %>% select(site_type, record_id) %>% distinct(),
     by = "record_id"
   ) %>%
-  select(t1_status, t2_status, t3_status, site_type) %>%
+  select(t1_status, t2_status, t3_status, t4_status, site_type) %>%
   tbl_summary(by = site_type)
 ```
 

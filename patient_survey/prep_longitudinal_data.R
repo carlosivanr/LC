@@ -99,18 +99,28 @@ rm(demographics, names_data)
 
 # Identify test records as those with the "test" in the name field OR those
 # with "test record" in the anything else field
-test_ids <- 
+# ids 14, 15, 16, and 18 flagged as test Ids. (CR 12/09/2025)
+# ids, 64, 65 flagged as test ids. (CR 2/23/2026)
+test_ids <-
   data %>%
     filter(
       grepl("test", name, ignore.case = TRUE) | 
-      grepl("test record", anythingelse, ignore.case = TRUE)) %>%
+      grepl("test record", anythingelse, ignore.case = TRUE) |
+      grepl("test", study_label, ignore.case = TRUE)
+      ) %>%
     pull(record_id)
+
 
 # Identify duplicated record_ids as those with "Duplicated record" in the 
 # enrollstatus field
+# Ids 10, 35, 36, 38, flagged as duplicate Ids
+# Id 69 flagged as duplicate (02/23/2026)
 duplicated_ids <- 
   data %>%
-    filter(enrollstatus == "Duplicate record") %>%
+    filter(
+      grepl("duplicate", enrollstatus, ignore.case = TRUE) |
+      grepl("duplicate", study_label, ignore.case = TRUE)
+      ) %>%
     pull(record_id)
 
 # Remove the test and duplicated ids from the pulled data
