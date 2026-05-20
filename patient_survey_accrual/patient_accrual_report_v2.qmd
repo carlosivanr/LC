@@ -307,6 +307,26 @@ data %>%
   )
 ```
 
+```{r}
+#| eval: false
+# This is the second table that I think Isabella and Marissa were asking for on 05/05/2026
+# Sent out 5/18/2026, need to confirm
+tab_data %>%
+  select(-healthrelated_social_needs_complete) %>%
+  left_join(
+    data %>% 
+      filter(record_id %in% tab_data$record_id) %>%
+      group_by(record_id) %>%
+      slice_head() %>%
+      ungroup() %>%
+      select(record_id, site_name), by = "record_id") %>%
+  select(-record_id, -patient_consent_form_complete) %>%
+  tbl_summary(
+    by = enrollstatus,
+  ) %>%
+  add_overall()
+```
+
 # Survey completion rates by time point
 - denominator consists of unique records where patient_consent_form is complete 
 ```{r}
@@ -395,7 +415,7 @@ rates <-
   mutate(t2_status = ifelse(
     is.na(t2_status) & days_since_t1 < 90, "Not due for T2", t2_status)) %>%
 
-  # If the value is missing and the days since the T1 is between 90 and 135, 
+  # If the value is missing and the days since the T1 is between 90 and 104, 
   # then the patient is within the time window allowed in RedCap to submit a
   # survey
   mutate(t2_status = ifelse(
@@ -506,6 +526,7 @@ tab_t1_t2_rates %>%
 * Those with an Incomplete T1 PASC were not administered subsequent surveys because completion of the T1 triggers subsequent invites
 * Incomplete (past window) indicates a participant that was invited so submit a survey, but did not do so within 14 days of the invite
 * Incomplete (within windows) indicates a participant that was invited to submit a survey, but is still within 14 days of invite and is eligible to submit a survey.
+* T1 = baseline 0d, T2= 90d (3m), T3= 180d (6m), t4 = 270d (9m)
 ```{r}
 rates %>%
   left_join(

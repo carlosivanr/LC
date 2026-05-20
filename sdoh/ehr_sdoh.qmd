@@ -1,5 +1,5 @@
 ---
-title: "EHR SDOH C4168_T3 2025-11-20"
+title: "EHR SDOH C4168_T3 (Work in progress)"
 
 date: "`r format(Sys.Date(), '%m-%d-%Y')`"
 
@@ -17,7 +17,7 @@ execute:
 ```{r}
 # /////////////////////////////////////////////////////////////////////////////
 # Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
-# AHRQ Long COVID - employee survey
+# AHRQ Long COVID - sdoh
 # /////////////////////////////////////////////////////////////////////////////
 ```
 
@@ -28,22 +28,27 @@ library(gtsummary)
 library(dfmtbx)
 ```
 
-
 ```{r}
 # Load data
 # data <- read_csv(file = "D:\\long_covid\\sdoh\\C3924_T3_SDOH_20250417_AHRQ.csv",
 #   show_col_types = FALSE)
-
 data <- read_csv(file = "D:\\long_covid\\sdoh\\data\\C4168_T3_SDOH_20251120.csv",
   show_col_types = FALSE)
 
 # Load dictionary for question text to flowsheet name
 labels <- read_csv(file = "D:\\long_covid\\sdoh\\data\\SOCIAL DRIVERS FLOWSHEET VALUE.csv",
   show_col_types = FALSE)
+
+# Remove the following ID, since they only have 3 rows of data and all are missing
+data <- data %>% 
+  filter(arb_person_id != "UCD46708466326")
 ```
 
 ```{r}
-demographics <- read_csv(file = "D:\\long_covid\\sdoh\\data\\C4167_Table1_Demographics.csv",
+# demographics_old <- read_csv(file = "D:\\long_covid\\sdoh\\data\\C4167_Table1_Demographics.csv",
+#   show_col_types = FALSE)
+
+demographics <- read_csv(file = "D:\\long_covid\\sdoh\\data\\C4279_Table1_Demographics_20260324.csv",
   show_col_types = FALSE)
 
 # Filter demographics to participants available in the flowsheet data
@@ -51,6 +56,13 @@ demographics %<>%
   filter(Pt_MDC %in% data$arb_person_id)
 ```
 
+```{r}
+# convert dd/mm/yyyy to yyyy/mm/dd
+data %<>%
+  mutate(date = as.Date(observation_date, format = "%m/%d/%Y"))
+```
+
+<!-- OLD CODE TO DETERMINE LABELS -->
 ```{r}
 #| eval: false
 
@@ -68,42 +80,54 @@ demographics %<>%
 ```{r}
 data %>%
   summarise(n = n_distinct(arb_person_id)) %>%
-  gt::gt()
+  format_gt_tbl()
 ```
 
 # Unique number of flowsheet row names (questions)
 ```{r}
 data %>%
   summarise(n = n_distinct(flowsheet_row_name)) %>%
-  gt::gt()
+  format_gt_tbl()
 ```
 
-# Demographics of unique participants in flowsheet data
-
 ```{r}
-demographics %>%
+# Recode age and insurance
+demographics %<>%
   mutate(Pt_Age = case_when(
     Pt_Age %in% c("21 to 25", "26 to 30", "31 to 35", "36 to 40") ~ "21 to 40",
     Pt_Age %in% c("41 to 45", "46 to 50", "51 to 55", "56 to 60") ~ "41 to 60",
     .default = "61 to 85"
-  )) %>%
+  ))
+
+demographics %<>%
+  mutate(Pt_Insurance_type = case_when(
+    Pt_Insurance_type %in% c("AETNA", "ANTHEM", "ANTHEM FEDERAL", "CIGNA", "CU ANTHEM EXCLUSIVE", "DENVER HEALTH", "GREAT WEST", "UCHEALTH ANTHEM", "UNITED") ~ "Commercial",
+    Pt_Insurance_type %in% c("COLORADO MEDICAID") ~ "Medicaid",
+    Pt_Insurance_type %in% c("MEDICARE", "UNITED MEDICARE") ~ "Medicare",
+    .default = NA 
+  ))
+```
+
+# Demographics of unique participants in flowsheet data
+```{r}
+demographics %>%
   select(Pt_Age, Pt_Sex, Pt_Gender, Pt_Ethnicity, Pt_Race, Pt_language, Pt_Insurance_type) %>%
   tbl_summary()
 ```
 
-```{r}
-
-```
-
-
-# Frequencies & proportions for flowsheet row names (questions)
-
+<!-- # Frequencies & proportions for flowsheet row names (questions) -->
 ```{r}
 unique_qs <- data %>% distinct(flowsheet_row_name) %>% pull()
 ```
 
 ```{r}
+# Create two wide format data frames
 data_wide <- data %>%
+  group_by(arb_person_id) %>%
+  pivot_wider(names_from = flowsheet_row_name, values_from = VALUE) %>%
+  ungroup()
+
+data_wide_num <- data %>%
   group_by(arb_person_id) %>%
   pivot_wider(names_from = flowsheet_row_name, values_from = VALUE) %>%
   ungroup()
@@ -115,10 +139,13 @@ col_names <- names(data_wide)
 col_names <- str_replace_all(col_names, " ", "_")
 names(data_wide) <- col_names
 
+names(data_wide_num) <- col_names
+
 data %<>% as_tibble()
 ```
 
 ```{r}
+# Recode numeric data to categorical for frequencies and proportions
 data_wide %<>% 
   # mutate 97 and 98 as Patient unable to answer, and Patient declined
   mutate(across(c(R_FINANCIAL_RESOURCE_STRAIN_BASICS), ~ case_match(.x, 
@@ -146,7 +173,7 @@ mutate(across(c(R_AUDIT_ALCOHOL_STD_DRINKS), ~ case_match(.x,
     .default = .x))) %>%
 mutate(across(c(R_AUDIT_ALCOHOL_FREQUENCY), ~ case_match(.x, 
     "1" ~ "Never",
-    "2" ~ "Montly or less",
+    "2" ~ "Monthly or less",
     "3" ~ "2-4 times a month",
     "4" ~ "2-4 times a week",
     "5" ~ "4 or more times a week",
@@ -175,6 +202,7 @@ mutate(
     "1" ~ "Never",
     "2" ~ "1 to 4 times per year",
     "3" ~ "More than 4 times per year",
+    "97" ~ "Unknown",
     .default = .x))) %>%
 mutate(
   across(c(R_SOCIAL_CONNECTIONS_CLUB_MEMBERSHIP), ~ case_match(.x,
@@ -218,7 +246,7 @@ mutate(
     .default = .x)))
 ```
 
-# Health Related Social Need Screening Tool
+# Food, transportation, & utilities insecurities
 ```{r}
 old_names <- data_wide %>%
   select(starts_with("R_FOOD"), starts_with("R_TRANSPORTATION"), R_AHC_HRSN_UTILITIES) %>%
@@ -229,6 +257,8 @@ new_names <- labels %>%
 
 data_wide %>%
   select(starts_with("R_FOOD"), starts_with("R_TRANSPORTATION"), R_AHC_HRSN_UTILITIES) %>%
+  mutate(across(everything(), ~ fct_na_value_to_level(.x, level = "Unknown"))) %>%
+  mutate(across(1:2, ~ factor(.x, levels = c("Never true", "Sometimes true", "Often true", "Unknown")))) %>%
   tbl_summary(
     type = list(everything() ~ "categorical"),
     label = list(
@@ -238,45 +268,87 @@ data_wide %>%
       R_TRANSPORTATION_DAILY_LIVING = new_names$`Row Display Name`[4],
       R_TRANSPORTATION_MEDICAL_APPT = new_names$`Row Display Name`[5]
     )
-  )
+  ) %>% bold_labels()  %>% modify_header(label = "Item")
 ```
 
+## Unmet needs for food, transportation,  or utilities
+```{r}
+# Unmet food related need
+data_wide %<>%
+  mutate(
+    food1 = R_FOOD_INSECURITY_ABILITY_TO_PAY,
+    food2 = R_FOOD_INSECURITY_WORRY) %>%
+  mutate(across(food1:food2, ~ ifelse(.x %in% c("Often true", "Sometimes true"), 1 ,0))) %>%
+  mutate(unmet_food = rowSums(across(food1:food2), na.rm = TRUE)) %>%
+  mutate(unmet_food = ifelse(unmet_food > 0, 1, 0))
 
-# AUDIT
+# Unmet transportation related need
+data_wide %<>%
+  mutate(
+    transp1 = R_TRANSPORTATION_DAILY_LIVING,
+    transp2 = R_TRANSPORTATION_MEDICAL_APPT) %>%
+  mutate(across(transp1:transp2, ~ ifelse(.x == "Yes", 1 ,0))) %>%
+  mutate(unmet_transp = rowSums(across(transp1:transp2), na.rm = TRUE)) %>%
+  mutate(unmet_transp = ifelse(unmet_transp > 0, 1, 0))
+
+
+# Unmet utilities need
+data_wide %<>%
+  mutate(unmet_util = ifelse(R_AHC_HRSN_UTILITIES == "Yes", 1, 0)) %>%
+  mutate(across(unmet_util, ~ ifelse(is.na(.x), 0, .x)))
+```
+
+```{r}
+data_wide %>%
+  select(unmet_food, unmet_transp, unmet_util) %>%
+  tbl_summary()
+```
+
+# Housing insecurity (Children's health watch instrument)
 ```{r}
 old_names <- data_wide %>%
-  select(starts_with("R_AUDIT")) %>%
+  select(starts_with("R_CHILDREN")) %>%
   names()
 
 new_names <- labels %>%
   filter(`Row Name` %in% old_names)
 
-
 data_wide %>%
-  # These questions are numbered Q1 through Q3 in the following order
-  select(R_AUDIT_ALCOHOL_FREQUENCY, R_AUDIT_ALCOHOL_STD_DRINKS, R_AUDIT_ALCOHOL_BINGE) %>%
-  mutate(R_AUDIT_ALCOHOL_FREQUENCY = factor(R_AUDIT_ALCOHOL_FREQUENCY,
-    levels = c("Never",
-    "Montly or less",
-    "2-4 times a month",
-    "2-4 times a week",
-    "4 or more times a week"))) %>%
+  select(starts_with("R_CHILDREN")) %>%
+  mutate(across(everything(), ~ fct_na_value_to_level(.x, level = "Unknown"))) %>%
   tbl_summary(
-    type = list(everything() ~ "categorical"),
+    type = everything() ~ "categorical",
     label = list(
-      R_AUDIT_ALCOHOL_BINGE = "How often do you have six or more drinks on one occasion?",
-      R_AUDIT_ALCOHOL_FREQUENCY = "How often do you have a drink containing alcohol?",
-      R_AUDIT_ALCOHOL_STD_DRINKS  = "How many drinks containing alcohol do you have on a typical day when you are drinking?"
-    
+      `R_CHILDREN'S_HEALTHWATCH_HOUSING_HOMELESS` = new_names$`Row Display Name`[1],
+      `R_CHILDREN'S_HEALTHWATCH_HOUSING_MORTGAGE` = new_names$`Row Display Name`[2],
+      `R_CHILDREN'S_HEALTHWATCH_HOUSING_TIMES_MOVED` = "In the past 12 months, how many times have you moved where you were living?"
     )
+  ) %>% bold_labels() %>% modify_header(label = "Item")
+```  
 
-  )
+```{r}
+# Unmet housing need from Children's Healthwatch Survey
+data_wide %<>%
+  # select(starts_with("R_CHILDREN")) %>%
+  mutate(
+    chw1 = ifelse(as.numeric(`R_CHILDREN'S_HEALTHWATCH_HOUSING_TIMES_MOVED`) >= 2, 1, 0),
+    chw2 = ifelse(`R_CHILDREN'S_HEALTHWATCH_HOUSING_MORTGAGE` == "Yes", 1, 0),
+    chw3 = ifelse(`R_CHILDREN'S_HEALTHWATCH_HOUSING_HOMELESS` == "Yes", 1, 0)) %>%
+  mutate(unmet_housing = rowSums(across(chw1:chw3))) %>%
+  mutate(unmet_housing = ifelse(unmet_housing > 0, 1, 0)) %>%
+  mutate(unmet_housing = ifelse(is.na(unmet_housing), 0, unmet_housing))
+```
+
+```{r}
+data_wide %>%
+  select(unmet_housing) %>%
+  tbl_summary()
 ```
 
 # Exercise
 ```{r}
 data_wide %>%
-  select(starts_with("R_EXERCI")) %>%
+  select(R_EXERCISE_DAYS_PER_WEEK, R_EXERCISE_MINUTES_PER_DAY) %>%
   # mutate(R_EXERCISE_MINUTES_PER_DAY = factor(as.numeric(R_EXERCISE_MINUTES_PER_DAY))) %>%
   mutate(across(everything(), ~ as.numeric(.x))) %>%
   tbl_summary(
@@ -286,6 +358,27 @@ data_wide %>%
       R_EXERCISE_DAYS_PER_WEEK = "On average, how many days per week do you engage in moderate to strenuous exercise (like a brisk walk)?",
       R_EXERCISE_MINUTES_PER_DAY = "On average, how many minutes do you engage in exercise at this level?"),
     statistic = list(everything() ~ "{mean} ({sd}; [{min}, {median}, {max}])")
+  ) %>% bold_labels()
+```
+
+## Lack of physical activity (<= 150 minuts of exercise per week)
+```{r}
+### Less than 150 minutes of moderate or strenuous exercise per week
+exercise <- data_wide %>%
+  select(R_EXERCISE_DAYS_PER_WEEK, R_EXERCISE_MINUTES_PER_DAY) %>%
+  mutate(across(everything(), ~ as.numeric(.x))) %>%
+  mutate(R_EXERCISE_MINUTES_PER_DAY = ifelse(R_EXERCISE_DAYS_PER_WEEK == 0, 0, R_EXERCISE_DAYS_PER_WEEK)) %>%
+  mutate(minutes_exer_per_wk = R_EXERCISE_DAYS_PER_WEEK * R_EXERCISE_MINUTES_PER_DAY) %>%
+  mutate(less_than_150m_per_wk = ifelse(minutes_exer_per_wk <= 150, 1, 0)) %>%
+  mutate(less_than_150m_per_wk = ifelse(is.na(less_than_150m_per_wk), 0, less_than_150m_per_wk))
+```
+
+```{r}
+#| eval: true
+exercise %>%
+  select(less_than_150m_per_wk) %>%
+  tbl_summary(
+    value = everything() ~ 1
   )
 ```
 
@@ -314,6 +407,7 @@ data_wide %>%
     "Separated",
     "Never married",
     "Living with partner"))) %>%
+  mutate(across(everything(), ~ fct_na_value_to_level(.x, level = "Unknown"))) %>%
   tbl_summary(
     type = everything() ~ "categorical",
     label = list(
@@ -324,50 +418,411 @@ data_wide %>%
       R_SOCIAL_CONNECTIONS_PHONE = new_names$`Row Display Name`[5],
       R_SOCIAL_CONNECTIONS_RELIGION = new_names$`Row Display Name`[6]
     )
-  )
+  )  %>% bold_labels() %>% modify_header(label = "Item")
 ```
 
-# Children's HealthWatch Survey
+
 ```{r}
-old_names <- data_wide %>%
-  select(starts_with("R_CHILDREN")) %>%
-  names()
+### Meets criteria for socially isolated
+# https://loinc.org/76512-3
+# Social isolation scores range from 0 to 4, with 0 representing the highest
+# level of social isolation and 4 representing the lowest level. Scores of 0 or
+# 1 are the most socially isolated participants. Patients received 1 point for
+# each of the following: being married or living together with someone in a
+# partnership at the time of questioning, averaging 3 or more interactions per
+#  week with other people (assessed with the questions "In a typical week, how
+# many times do you talk on the telephone with family, friends, or neighbors?"
+# and "How often do you get together with friends or relatives?"), attending
+# church or religious services 4 or more times per year, and reporting that they
+# participate in a club or organization such as a church group, union, fraternal
+# or athletic group, or school group. PMID: 24028260
 
-new_names <- labels %>%
-  filter(`Row Name` %in% old_names)
+isolation <- data_wide %>%
+  select(starts_with("R_SOCIAL")) %>%
+  mutate(
+    R_SOCIAL_CONNECTIONS_MARITAL_STATUS = case_when(
+      R_SOCIAL_CONNECTIONS_MARITAL_STATUS %in% c("Married", "Living with partner") ~ 1,
+      .default = 0)) %>%
+  mutate(across(c("R_SOCIAL_CONNECTIONS_GET_TOGETHER", "R_SOCIAL_CONNECTIONS_PHONE"), 
+    ~ case_when(
+      .x %in% c("Three times a week", "More than three times a week") ~ 1,
+      .default = 0))) %>%
+  mutate(across(c("R_SOCIAL_CONNECTIONS_RELIGION", "R_SOCIAL_CONNECTIONS_CLUB_ATTENDANCE"), 
+    ~ case_when(
+      .x %in% c("More than 4 times per year") ~ 1, 
+      .default = 0))) %>%
+  mutate(across(R_SOCIAL_CONNECTIONS_CLUB_MEMBERSHIP, ~ case_when(.x == "Yes" ~ 1, .default = 0)))
 
-data_wide %>%
-  select(starts_with("R_CHILDREN")) %>%
+isolation %<>%
+  mutate(social_iso_score1 = rowSums(across(everything()))) %>%
+  mutate(socially_isolated1 = ifelse(social_iso_score1 <= 1, 1, 0))
+
+isolation %<>%
+  mutate(social_iso_score2 = rowSums(across(
+    c("R_SOCIAL_CONNECTIONS_MARITAL_STATUS", "R_SOCIAL_CONNECTIONS_GET_TOGETHER", "R_SOCIAL_CONNECTIONS_PHONE", "R_SOCIAL_CONNECTIONS_RELIGION", "R_SOCIAL_CONNECTIONS_CLUB_MEMBERSHIP")
+  ))) %>%
+  mutate(socially_isolated2 = ifelse(social_iso_score2 <= 1, 1, 0))
+
+
+```
+
+## Scoring version 1
+* EPIC data contains 6 items referencing social isolation. NHANES scoring guide for the social isolation panel references 5 out of the 6 questions.
+* This version scores all 6 questions
+* https://loinc.org/76512-3
+```{r}
+#| eval: true
+isolation  %>%
+  select(socially_isolated1) %>%
+  tbl_summary()
+```
+
+## Scoring version 2
+* Score only the 5 items referenced in the scoring guide.
+```{r}
+isolation  %>%
+  select(socially_isolated2) %>%
+  tbl_summary()
+```
+
+<!-- ## Custom scoring -->
+```{r}
+#| eval: false
+isolation_jun <- data_wide %>%
+  select(starts_with("R_SOCIAL")) %>%  
+  mutate(across(c("R_SOCIAL_CONNECTIONS_GET_TOGETHER", "R_SOCIAL_CONNECTIONS_PHONE"), 
+    ~ case_when(
+      .x %in% c("Never", "Once a week") ~ 1,
+      .default = 0))) %>%
+  mutate(across(c("R_SOCIAL_CONNECTIONS_RELIGION", "R_SOCIAL_CONNECTIONS_CLUB_ATTENDANCE"), 
+    ~ case_when(
+      .x %in% c("Never") ~ 1, 
+      .default = 0))) %>%
+  mutate(across(R_SOCIAL_CONNECTIONS_CLUB_MEMBERSHIP, ~ case_when(.x == "No" ~ 1, .default = 0))) %>%
+  mutate(R_SOCIAL_CONNECTIONS_MARITAL_STATUS = case_when(
+    R_SOCIAL_CONNECTIONS_MARITAL_STATUS %in% c("Widowed", "Separated", "Never married") ~ 1,
+      .default = 0)) %>%
+  mutate(any_social_need = rowSums(across(everything()))) %>%
+  mutate(any_social_need = ifelse(any_social_need >= 1, 1, 0)) 
+
+
+isolation_jun %>%
+  select(
+    # R_SOCIAL_CONNECTIONS_GET_TOGETHER,
+    # R_SOCIAL_CONNECTIONS_CLUB_MEMBERSHIP,
+    # R_SOCIAL_CONNECTIONS_RELIGION,
+    # R_SOCIAL_CONNECTIONS_CLUB_ATTENDANCE,
+    # R_SOCIAL_CONNECTIONS_PHONE,
+    # R_SOCIAL_CONNECTIONS_MARITAL_STATUS,
+    any_social_need) %>%
   tbl_summary(
-    type = everything() ~ "categorical",
-    label = list(
-      `R_CHILDREN'S_HEALTHWATCH_HOUSING_HOMELESS` = new_names$`Row Display Name`[1],
-      `R_CHILDREN'S_HEALTHWATCH_HOUSING_MORTGAGE` = new_names$`Row Display Name`[2],
-      `R_CHILDREN'S_HEALTHWATCH_HOUSING_TIMES_MOVED` = "In the past 12 months, how many times have you moved where you were living?"
-    )
+    label = any_social_need ~ "socially_isolated"
   )
 ```
 
-# Additional Questions
+# Occupational Stress Questionnaire (OSQ)
+* https://loinc.org/76542-0
 ```{r}
-data_wide %>%
-  select(R_STRESS_ANXIOUS, R_PAC_B1300) %>%
+# Occupational Stress Questionnaire Item
+# https://loinc.org/76542-0
+# https://pubmed.ncbi.nlm.nih.gov/14712852/
+# https://www.sjweh.fi/article/752
+# 2nd paragraph on pg. 445
+# Any one in "rather much" through "very much" is a positive score
+data_wide %<>%
   mutate(R_STRESS_ANXIOUS = factor(R_STRESS_ANXIOUS, levels = c(
     "Not at all",
     "Only a little",
     "To some extent",
     "Rather much",
     "Very much"))) %>%
+  mutate(
+    across(
+      R_STRESS_ANXIOUS, ~ fct_na_value_to_level(.x, level = "Unknown")))
+```
+
+```{r}
+data_wide %>% 
+  select(R_STRESS_ANXIOUS) %>%
+  tbl_summary(
+    label = list(
+      R_STRESS_ANXIOUS = "Do you feel stress, tense, restless, nervous, or anxious, or unable to sleep at night because your mind is troubled all the time - these days?"
+    )
+  ) %>% bold_labels %>% modify_header(label = "Item")
+```
+
+## Positive OSQ
+```{r}
+#  https://www.sjweh.fi/article/752
+# 2nd paragraph on pg. 445
+# Any one in "to some extent" through "very much" is a positive score *** need to double check this
+data_wide %<>%
+  mutate(osq_pos = ifelse(
+    R_STRESS_ANXIOUS %in% c(
+    # "To some extent", 
+    "Rather much", 
+    "Very much"), 1, 0))
+```
+
+```{r}
+data_wide %>%
+  select(osq_pos) %>%
+  tbl_summary(
+    # label = osq_pos ~ "stressed"
+  )
+```
+
+
+# AUDI
+* https://www.hepatitis.va.gov/alcohol/treatment/audit-c.asp
+```{r}
+old_names <- data_wide %>%
+  select(starts_with("R_AUDIT")) %>%
+  names()
+
+new_names <- labels %>%
+  filter(`Row Name` %in% old_names)
+
+data_wide %>%
+  # These questions are numbered Q1 through Q3 in the following order
+  select(R_AUDIT_ALCOHOL_FREQUENCY, R_AUDIT_ALCOHOL_STD_DRINKS, R_AUDIT_ALCOHOL_BINGE) %>%
+  mutate(R_AUDIT_ALCOHOL_FREQUENCY = factor(R_AUDIT_ALCOHOL_FREQUENCY,
+    levels = c("Never",
+    "Monthly or less",
+    "2-4 times a month",
+    "2-4 times a week",
+    "4 or more times a week"))) %>%
+  mutate(across(everything(), ~ fct_na_value_to_level(.x, level = "Unknown"))) %>%
+  tbl_summary(
+    type = list(everything() ~ "categorical"),
+    label = list(
+      R_AUDIT_ALCOHOL_BINGE = "How often do you have six or more drinks on one occasion?",
+      R_AUDIT_ALCOHOL_FREQUENCY = "How often do you have a drink containing alcohol?",
+      R_AUDIT_ALCOHOL_STD_DRINKS  = "How many drinks containing alcohol do you have on a typical day when you are drinking?"
+    )
+  ) %>% bold_labels %>% modify_header(label = "Item")
+```
+
+```{r}
+# Score the Audit for AUD
+# The numeric responses do not match up with the mapping needed to score.
+# The numeric responses from COMPASS use a sequence of numeric values from 1 to
+# 5, but the scoring requires a numeric value from 0 to 4. Values are 
+# harmonized below.
+# https://www.hepatitis.va.gov/alcohol/treatment/audit-c.asp
+
+### AUDIT meets positive score
+# * sex dependent scoring, 4 for men, 3 for women according
+
+# Sex dependent scoring
+# https://www.mdcalc.com/calc/2021/audit-c-alcohol-use#next-steps
+
+# Set a global cutoff
+cutoff <- 3
+
+audit_num <- data_wide_num %>%
+  # These questions are numbered Q1 through Q3 in the following order
+  select(R_AUDIT_ALCOHOL_FREQUENCY, R_AUDIT_ALCOHOL_STD_DRINKS, R_AUDIT_ALCOHOL_BINGE) %>%
+  mutate(across(everything(), ~ as.numeric(.x))) %>%
+  mutate(R_AUDIT_ALCOHOL_FREQUENCY = R_AUDIT_ALCOHOL_FREQUENCY - 1) %>%
+  mutate(across(R_AUDIT_ALCOHOL_STD_DRINKS, ~ ifelse(.x == "1", 0, .x))) %>%
+  mutate(R_AUDIT_ALCOHOL_BINGE = R_AUDIT_ALCOHOL_BINGE - 1) %>%
+  mutate(audit_score = rowSums(across(everything()), na.rm = TRUE)) %>%
+  mutate(all_vals_from_q1 = ifelse(audit_score == R_AUDIT_ALCOHOL_FREQUENCY, 1, 0)) %>%
+  mutate(audit_pos = ifelse(audit_score >= cutoff, 1, 0)) %>%
+  mutate(audit_pos = ifelse(all_vals_from_q1 == 1 & audit_pos == 1, 0, audit_pos))
+
+# It does not matter if we use a global or sex dependent scoring system, when
+# we adjust for all values from Q1. It also does not matter if the cutoff is
+# set to 3 or 4, since some of these are modified by Q1
+  # mutate(arb_person_id = data_wide$arb_person_id) %>%
+  # left_join(., demographics %>% select(Pt_MDC, Pt_Sex), by = c("arb_person_id" = "Pt_MDC")) %>%
+  # mutate(audit_pos = 0) %>%
+  # mutate(audit_pos = ifelse(Pt_Sex == "male" & audit_score >= 4, 1, audit_pos)) %>% 
+  # mutate(audit_pos = ifelse(Pt_Sex == "female" & audit_score >=3, 1, audit_pos)) %>%
+  # mutate(audit_pos = ifelse(Pt_Sex == "unknown", NA, audit_pos)) %>%
+  # mutate(across(audit_pos, ~ ifelse(is.na(.x), 0, .x)))
+```
+
+## National HIV curriculum scoring 
+* Global summed score of 3 for all is set as the cut off. Additionally, sets the summed score to 0 if all points come from the Q1: "How often do you have a drink containing alcohol?"
+* Other scoring systems do not adjust if all points come from the Q1. Others score according to sex, 3 as a cutoff for females and 4 for males.
+```{r}
+#| eval: false
+# Preview table
+audit_num %>%
+  select(audit_pos) %>%
+  tbl_summary()
+```
+
+<!-- ## Custom scoring -->
+```{r}
+#| eval: false
+audit_jun <- data_wide %>%
+  # These questions are numbered Q1 through Q3 in the following order
+  select(R_AUDIT_ALCOHOL_FREQUENCY, R_AUDIT_ALCOHOL_STD_DRINKS, R_AUDIT_ALCOHOL_BINGE) %>%
+  mutate(R_AUDIT_ALCOHOL_FREQUENCY = ifelse(R_AUDIT_ALCOHOL_FREQUENCY %in% c("2-4 times a week", "4 or more times a a weel"), 1 , 0 )) %>%
+  mutate(R_AUDIT_ALCOHOL_STD_DRINKS = ifelse(R_AUDIT_ALCOHOL_STD_DRINKS %in% c("3 or 4", "5 or 6"), 1 ,0)) %>%
+  mutate(R_AUDIT_ALCOHOL_BINGE = ifelse(R_AUDIT_ALCOHOL_BINGE %in% c("Less than monthly", "Weekly"), 1 ,0)) %>%
+  mutate(audit_score = rowSums(across(everything()), na.rm = TRUE)) %>%
+  mutate(audit_pos = ifelse(audit_score >= 1, 1, 0))
+
+audit_jun %>%
+  select(audit_pos) %>%
+  tbl_summary()
+```
+
+# Health Literacy
+```{r}
+data_wide %<>%
   mutate(R_PAC_B1300 = factor(R_PAC_B1300, levels = c(
     "Never",
     "Rarely",
     "Sometimes",
     "Often",
     "Always"))) %>%
+  mutate(
+    across(
+      R_PAC_B1300, ~ fct_na_value_to_level(.x, level = "Unknown"))) 
+```
+
+```{r}   
+data_wide %>%
+  select(R_PAC_B1300) %>%
   tbl_summary(
     label = list(
-      R_STRESS_ANXIOUS = "Do you feel stress - tense, restless, nervous, or anxious, or unable to sleep at night because your mind is troubled all the time - these days?",
       R_PAC_B1300 = "How often do you need to have someone help you when you read instructions, pamphlets, or other written material from your doctor or pharmacy?"
     )
+  ) %>% bold_labels %>% modify_header(label = "Item")
+```
+
+## Health literacy need
+```{r}
+# Health literacy
+data_wide %<>%
+  mutate(health_lit_pos = ifelse(R_PAC_B1300 %in% c("Often", "Always"), 1, 0))
+```
+
+```{r}
+data_wide %>%
+  select(health_lit_pos) %>%
+  tbl_summary()
+```
+
+# Summary Table: All dichotomized domains
+```{r}
+summary_tab <- bind_cols(
+    # Housing, food, transp, util, osq, health literacy
+    data_wide %>%
+      left_join(demographics, by = c("arb_person_id" = "Pt_MDC")) %>%
+      select(Pt_Sex, Pt_Gender, Pt_Age, Pt_Race, unmet_food, unmet_transp, unmet_housing, unmet_util, osq_pos, health_lit_pos,),
+    
+    # exercise
+    exercise %>%
+      select(less_than_150m_per_wk),
+
+    # social
+    isolation  %>%
+      select(socially_isolated1, socially_isolated2),
+
+    # isolation_jun %>%
+    #   select(any_social_need) %>%
+    #   rename(socially_isolated2 = any_social_need),
+
+    # AUDIT
+    audit_num %>%
+      select(audit_pos)
+
+    # audit_jun %>%
+    #   select(audit_pos) %>%
+    #   rename(audit_pos2 = audit_pos)
+
+)
+```
+
+```{r}
+disp_labels <- list(
+    # any_unmet_need ~ "Any unmet need",
+    unmet_housing ~ "Unmet housing need",
+    unmet_food ~ "Unmet food need",
+    unmet_transp ~ "Unmet transportation need",
+    unmet_util ~ "Unmet utility need",
+    osq_pos ~ "Moderate to severely stressed",
+    health_lit_pos ~ "Health literacy need",
+    less_than_150m_per_wk ~ "Physical activity need",
+    socially_isolated ~ "Social need",
+    audit_pos ~ "Positive AUDIT-C")
+
+summary_tab %>%
+  select(-starts_with("Pt_")) %>%
+  tbl_summary(
+  # label = disp_labels,
+  value = list(less_than_150m_per_wk ~ "1")
   )
+```
+
+
+
+
+<!-- WORKING BELOW HERE -->
+<!-- ## Unmet Needs by Patient Characteristics -->
+<!-- ### Sex -->
+```{r}
+#| eval: true
+summary_tab %>%
+  select(unmet_housing, unmet_food, unmet_transp, unmet_util, osq_pos, health_lit_pos, less_than_150m_per_wk,
+  socially_isolated1, audit_pos, Pt_Sex) %>%
+  mutate(across(starts_with("unmet"), ~ ifelse(is.na(.x), 0, .x))) %>%
+  tbl_summary(
+    by = Pt_Sex,
+    # label = disp_labels,
+    value = list(less_than_150m_per_wk ~ 1)
+) %>% add_p()
+```
+
+```{r}
+summary_tab %>%
+  select(unmet_housing, unmet_food, unmet_transp, unmet_util, osq_pos, health_lit_pos, less_than_150m_per_wk,
+  socially_isolated1, audit_pos, Pt_Gender) %>%
+  mutate(across(starts_with("unmet"), ~ ifelse(is.na(.x), 0, .x))) %>%
+  tbl_summary(
+    by = Pt_Gender,
+    # label = disp_labels,
+    value = list(less_than_150m_per_wk ~ 1)
+) %>% add_p()
+```
+
+```{r}
+# add gender
+# provide p-vals, for this and all other, just overall F test or chi square,
+
+```
+
+<!-- ### Age -->
+```{r}
+#| eval: true
+summary_tab %>%
+  select(unmet_housing, unmet_food, unmet_transp, unmet_util, osq_pos, health_lit_pos, less_than_150m_per_wk,
+  socially_isolated1, audit_pos, Pt_Age) %>%
+  mutate(across(starts_with("unmet"), ~ ifelse(is.na(.x), 0, .x))) %>%
+  tbl_summary(
+    by = Pt_Age,
+    # label = disp_labels,
+    value = list(less_than_150m_per_wk ~ 1)
+) %>% add_p()
+```
+
+<!-- ### Race -->
+```{r}
+#| eval: true
+summary_tab %>%
+  mutate(Pt_Race = ifelse(Pt_Race == "white", "white", "non-white")) %>%
+  select(unmet_housing, unmet_food, unmet_transp, unmet_util, osq_pos, health_lit_pos, less_than_150m_per_wk,
+  socially_isolated1, audit_pos, Pt_Race) %>%
+  mutate(across(starts_with("unmet"), ~ ifelse(is.na(.x), 0, .x))) %>%
+  tbl_summary(
+    by = Pt_Race,
+    # label = disp_labels,
+    value = list(less_than_150m_per_wk ~ 1)
+  ) %>% add_p()
 ```

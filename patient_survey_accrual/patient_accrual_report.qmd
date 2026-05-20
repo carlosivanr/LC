@@ -297,6 +297,16 @@ data %>%
 ```
 
 ```{r}
+data %>%
+  filter(redcap_event_name == "screening_and_enro_arm_1") %>%
+  mutate(enrollstatus = 
+    fct_na_value_to_level(factor(enrollstatus), level = "Missing")) %>%
+  select(enrollstatus, site_name) %>%
+  tbl_summary(by = enrollstatus) %>%
+  add_overall()
+```
+
+```{r}
 # The N here is 28, whereas in the previous table, the N was 29. indicating there may be a record missing, so the denominator
 # is different, but the value is still the same
 enrolled_ids <- data %>% 
@@ -327,6 +337,10 @@ tab_data %>%
       patient_consent_form_complete ~ "Consented")
   ) %>%
   modify_header(label = "**Pre-enrolled patients**")
+```
+
+```{r}
+
 ```
 
 <!-- Table of pre-enrolled patients version 1 -->

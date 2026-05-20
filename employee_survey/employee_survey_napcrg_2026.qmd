@@ -84,6 +84,129 @@ raw_to_label_header <-  function(df) {
 dict <- create_name_dict()
 ```
 
+```{r}
+# Subset data to PCC only
+data_pcc <- data %>%
+  filter(pcc_or_mdc == "practice")
+
+data_numeric_pcc <- data_numeric %>%
+  filter(pcc_or_mdc == "practice")
+
+labels_pcc <- labels %>%
+  filter("Primary Care Center (practice) or Multi-Disciplinary Center (clinic) employee?" == "practice")
+```
+
+# Consent rate PCC
+- Denominator is the total number of records available in Redcap
+```{r}
+# use the name variable
+data_pcc %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+```
+
+```{r}
+# Use the consent_complete variable
+data_pcc %>%
+  select(employee_consent_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+#| eval: false
+test <- data_pcc %>%
+  select(
+    record_id, consent_name, 
+    employee_consent_complete, employee_survey_t1_complete,
+    employee_compensation_t1_complete, practice_name)
+
+test %>%
+  select(-record_id, -consent_name, -practice_name) %>%
+  tbl_summary()
+
+test %>%
+  filter(!is.na(consent_name)) %>%
+  select(-record_id, -consent_name, -practice_name) %>%
+  tbl_summary()
+
+test %>%
+  select(practice_name) %>%
+  tbl_summary()
+
+test %>%
+  filter(employee_compensation_t1_complete == "Complete") %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+
+```
+
+```{r}
+#| eval: false
+# Read in kristen's file for amc only
+kristens_amc <- read_csv("D:\\long_covid\\employee_survey\\data_qa\\amc_surveys.csv", show_col_types = FALSE)
+
+# Kristen's files shows 33 and 3
+# not sure how x_complete is defined
+kristens_amc %>%
+  select(x_complete) %>%
+  tbl_summary() %>%
+  as_tibble()
+
+# What column maps onto x_complete
+data_pcc %>%
+  filter(practice_name == "AMC WISH Clinic") %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary() %>%
+  as_tibble()
+
+# clinic_names  <- table(data_pcc$practice_name) %>% names()
+
+# for (clin in clinic_names) {
+#   print(clin)
+
+#   tab <- data_pcc %>%
+#   filter(practice_name == clin) %>%
+#   select(employee_survey_t1_complete) %>%
+#   tbl_summary() %>%
+#   as_tibble()
+
+#   print(tab)
+# }
+
+data_pcc %>%
+  select(practice_name, employee_survey_t1_complete) %>%
+  tbl_summary(by = employee_survey_t1_complete) %>%
+  add_overall()
+```
+
+
+```{r}
+# Drop those that have not consented to participate
+# data_pcc %<>%
+#   filter(!is.na(consent_name))
+```
+
+# Completion rate PCC
+* Denominator is the number of people that provided consent
+```{r}
+data_pcc %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+data_pcc %<>%
+  filter(employee_survey_t1_complete == "Complete")
+```
+
+```{r}
+# filter data_numeric in the same way that data_raw is filtered
+data_numeric_pcc %<>%
+  filter(record_id %in% data_pcc$record_id)
+```
+
 # Consent rate
 - Denominator is the total number of records available in Redcap
 ```{r}
@@ -380,7 +503,7 @@ data %>%
 
 ## Numeric scores
 ```{r}
-# Currently only scores those with complete responses. If at least one item is
+# Currently only scores those with complete responses. If atleast one item is
 # missing, that participants scores are dropped.
 # For each participant, outputs an average across all 6 items.
 ic_scores <- data_numeric %>%
@@ -816,7 +939,7 @@ stigma_scores <- data_numeric %>%
     rowwise() %>%
     mutate(n_missing = sum(is.na(c_across(everything())))) %>%
     ungroup() %>%
-    mutate(stigma = ifelse(n_missing > 1, NA, stigma)) %>% # only 2 responses have n_missing . 1.
+    mutate(stigma = ifelse(n_missing > 1, NA, stigma)) %>%
     select(stigma)
 ```
 
@@ -837,69 +960,6 @@ data %>%
 # comparison between MDC and PCC indicates that the two clinic types do not differ.
 ```
 
-```{r}
-#| eval: false
-# version 3, more akin to the spirit of the original author's scoring approach.
-data_numeric %>%
-    select(prefer_not:waste_dollars) %>%
-    mutate(across(c(prefer_not, irritate, particularly_difficult, little_help, waste_dollars), ~ (.x - 6) * -1)) %>%
-    mutate(stigma_score = rowSums(., na.rm = TRUE)) %>%
-    mutate(stigma_score = stigma_score * (66/50)) %>% # 60 is the max score on the 10-item version, 50 here with this version
-    select(stigma_score) %>%
-    bind_cols(., data %>% select(pcc_or_mdc)) %>%
-  tbl_summary(
-    by = pcc_or_mdc,
-    statistic = list(everything() ~ "{mean} ({sd})")) %>%
-    add_p()
-```
-
-```{r}
-#| eval: false 
-
-mcrs <- data %>% 
-  filter(pcc_or_mdc == "PCC") %>%
-  select(age_range, gender, experience_cat, personal_covid, practice_role_pcc, stigma)
-
-model <- lm(stigma ~ age_range + gender + experience_cat + personal_covid + practice_role_pcc, data = mcrs)
-
-broom::tidy(model)
-
-tbl_regression(model)
-
-# This subsets to 167 providers 
-anova_model <- lm(
-  stigma ~ practice_role_pcc, 
-  data = (
-    data #%>% 
-      # filter(practice_role_pcc %in% 
-      #   c("Advanced practice provider (NP, PA)",   "Medical Assistant/LPN", "Nurse/RN", "Physician")) %>%
-      # mutate(practice_role_pcc = as.factor(practice_role_pcc))
-      )
-)
-
-broom::tidy(
-  anova(anova_model)
-)
-
-
-emms <- emmeans::emmeans(anova_model, ~ practice_role_pcc) %>%
-  as_tibble()
-
-# Test of marginal means
-pwc <- emmeans::emmeans(anova_model, ~ practice_role_pcc) %>%
-  pairs() %>%
-  as_tibble() 
-  
-# Format the pwc table for display
-# pwc %>%
-#   dfmtbx::format_gt_tbl()
-
-```
-
-```{r}
-
-```
-
 ## Overall
 ```{r}
 data %>%
@@ -912,7 +972,7 @@ data %>%
 ```
 
 
-<!-- ### Table of demographics from those that have a stigma score at or below the 10th percentile
+### Table of demographics from those that have a stigma score at or below the 10th percentile
 ```{r}
 data %<>% mutate(burnout_situation = factor(burnout_situation, levels = c(
     "I enjoy my work. I have no symptoms of burnout.",
@@ -1068,9 +1128,7 @@ data %>%
     .combine_with = "tbl_stack",
     .header = "**{strata}**, N = {n}"
   )
-``` 
--->
-
+```
 
 ## PCC
 ```{r}
@@ -1275,32 +1333,6 @@ data %>%
   mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
   tbl_summary(by = pcc_or_mdc) %>%
   add_overall()
-```
-
-## Numeric scoring, lower is worse, higher is better
-```{r}
-data_numeric %>%
-  select(burnout_situation, pcc_or_mdc) %>%
-  tbl_summary(
-    by = pcc_or_mdc,
-    type = list(burnout_situation ~ "continuous"),
-    statistic = list(all_continuous() ~ "{mean} ({sd})")
-    )
-```
-
-```{r}
-#| eval: false
-
-model <- lm(stigma ~ burnout_situation,
-  data = (
-    data_numeric %>% select(burnout_situation) %>% bind_cols(data %>% select(stigma))
-  )
-)
-
-
-tbl_regression(model)
-
-broom::tidy(model)
 ```
 
 # Please answer these questions about your work satisfaction. 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)

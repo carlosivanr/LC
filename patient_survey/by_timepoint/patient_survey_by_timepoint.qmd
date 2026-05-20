@@ -1,0 +1,1002 @@
+---
+title: "AHRQ Long COVID - Patient Survey Results by Timepoint"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format: 
+  docx:
+    toc: true
+    embed-resources: true
+    reference-doc: "D:/custom-reference-doc.docx"
+
+execute: 
+  echo: false
+---
+
+```{r}
+# -----------------------------------------------------------------------------
+# Carlos Rodriguez, PhD. CU Dept. of Family Medicine
+# 01-12-2026
+
+# Prep Longitudinal Data
+
+# Description - This script is designed to download, prep and clean the RedCap
+# data from the AHRQ Long COVID project.
+
+# This script is part 2 of 2 in a series of code files that produce reports
+# for the patient survey data.This file specifically displays out any 
+# information by time point when available.
+
+
+# -----------------------------------------------------------------------------
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+
+library(dfmtbx)
+# renv::install("carlosivanr/dfmtbx") # To update
+
+library(tidyverse)
+library(gtsummary)
+```
+
+```{r}
+# Run the prep longitudinal data script
+source("D:\\long_covid\\patient_survey\\prep_longitudinal_data.R")
+```
+
+```{r}
+t1 <- data %>% filter(record_id %in% tab_data$record_id, redcap_event_name == "t1")
+t2 <- data %>% filter(record_id %in% tab_data$record_id, redcap_event_name == "t2")
+```
+
+# Patient demographics & characteristics
+## Age, gender, sexual orientation
+```{r}
+# Patient age, gender and sexual orientation
+t1 %>%
+  select(age_group, patient_gender, patient_sexorient) %>%
+  tbl_summary(
+    # statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    label = list(
+      age_group ~ "Age group",
+      patient_gender ~ "Gender",
+      patient_sexorient ~ "Sexual orientation"
+    )
+    )
+```
+
+## Race & ethnicity
+```{r}
+# Patient race and ethnicity
+t1 %>%
+  select(patient_race___1:patient_race___7, patient_ethn) %>%
+  mutate(across(patient_race___1:patient_race___7, ~ factor(.x, levels = c(0, 1)))) %>%
+  tbl_summary(
+    label = list(
+      "patient_race___1" ~ "African American or Black",
+      "patient_race___2" ~ "American Indian/Alaska Native.",
+      "patient_race___3" ~ "Asian",
+      "patient_race___4" ~ "Native Hawaiian/Other Pacific Islander",
+      "patient_race___5" ~ "White",
+      "patient_race___6" ~ "Other",
+      "patient_race___7" ~ "Prefer not to answer",
+      "patient_ethn" ~ "Hispanic"),
+    value = list(patient_race___1 ~ "1",
+                 patient_race___2 ~ "1",
+                 patient_race___3 ~ "1",
+                 patient_race___4 ~ "1",
+                 patient_race___5 ~ "1",
+                 patient_race___6 ~ "1",
+                 patient_race___7 ~ "1")
+  )
+```
+
+## Patient preferred language
+```{r}
+# Patient preferred language
+t1 %>%
+  select(patient_pref_lang) %>%
+  tbl_summary(
+    label = list("patient_pref_lang" ~ "Patient preferred lang.")
+  )
+```
+
+## Patient insurance
+```{r}
+# Patient race and ethnicity
+t1 %>%
+  select(patient_insurance___1:patient_insurance___10) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      "patient_insurance___1" ~ "State market place",
+      "patient_insurance___2" ~ "Employer provided",
+      "patient_insurance___3" ~ "Medicaid",
+      "patient_insurance___4" ~ "Medicare - Original Medicare",
+      "patient_insurance___5" ~ "Medicare - Advantage Plan",
+      "patient_insurance___6" ~ "Worker's Comp",
+      "patient_insurance___7" ~ "Other",
+      "patient_insurance___8" ~ "Self-pay",
+      "patient_insurance___9" ~ "Uninsured",
+      "patient_insurance___10" ~ "Prefer not to answer",
+      "patient_insurance___11" ~ "Medigap",
+      "patient_insurance___12" ~ "Medicare Part D"
+    ),
+    value = everything() ~ "1"
+  )
+```
+
+## Patient education level
+```{r}
+# Patient education level
+t1 %>%
+  select(patient_school) %>%
+  tbl_summary(
+    label = list(patient_school ~ "Patient education level")
+  )
+```
+
+## Patient marital status
+```{r}
+t1 %>%
+  select(patient_marital) %>%
+  tbl_summary(
+    label = list(patient_marital ~ "Patient marital status")
+  )
+```
+
+## Patient employment status pre- long COVID
+```{r}
+t1 %>%
+  select(patient_employ___1:patient_employ___7) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      patient_employ___1 ~ "Employed Full-time",
+      patient_employ___2 ~ "Employed Part-time",
+      patient_employ___3 ~ "Unemployed",
+      patient_employ___4 ~ "Disabled",
+      patient_employ___5 ~ "Retired",
+      patient_employ___6 ~ "Student",
+      patient_employ___7 ~ "Other"
+    ),
+    value = everything() ~ "1"
+  )
+```
+
+## Patient employment status current
+```{r}
+t1 %>%
+  select(patient_employ_2___1:patient_employ_2___7) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      patient_employ_2___1 ~ "Employed Full-time",
+      patient_employ_2___2 ~ "Employed Part-time",
+      patient_employ_2___3 ~ "Unemployed",
+      patient_employ_2___4 ~ "Disabled",
+      patient_employ_2___5 ~ "Retired",
+      patient_employ_2___6 ~ "Student",
+      patient_employ_2___7 ~ "Other"
+      ),
+    value = everything() ~ "1"
+  )
+```
+
+<!-- //////////// PATIENT CLINICAL QUESTIONS AT T1 AND T5 ONLY //////////// -->
+# Patient clinical questions
+* Currently subsets to those that provided consent.
+
+## 	For how many months do you feel you have had Long COVID symptoms (regardless of formal diagnosis)? (For example, 1 year would be 12 months; 2 years would be 24 months; 3 years would be 36 months) 
+```{r}
+t1 %>%
+  select(months_symps) %>%
+  tbl_summary(
+    statistic = everything() ~ "{mean} ({sd}); [{min}, {median}, {max}]"
+  )
+```
+
+
+## Do you now have a diagnosis from a health care provider of Long COVID?
+```{r}
+t1 %>%
+  select(lcdiagnosis) %>%
+  tbl_summary()
+```
+
+### If yes, how many months did it take for you to get that diagnosis after your symptoms started? (For example, 1 year would be 12 months; 2 years would be 24 months; 3 years would be 36 months)
+```{r}
+t1 %>%
+  filter(lcdiagnosis == "Yes") %>%
+  select(
+    ifyes_monthsymps) %>%
+  tbl_summary(
+    statistic = everything() ~ "{mean} ({sd}); [{min}, {median}, {max}]"
+  )
+```
+
+
+## 	Which of the following conditions had you been diagnosed with prior to (before) developing Long COVID symptoms? (check all that apply)
+```{r}
+# Order the condition from most frequent to least frequent
+ordered_conditions <- t1 %>% 
+  select(conditions___1:conditions___14) %>%
+  mutate(across(everything(), ~ as.numeric(.x))) %>%
+  summarise_all(list(sum)) %>%
+  pivot_longer(cols = everything(), names_to = "condition", values_to = "count") %>%
+  arrange(desc(count)) %>%
+  pull(condition)
+```
+
+```{r}
+t1 %>%
+  select(conditions___1:conditions___14) %>%
+  select(all_of(ordered_conditions)) %>%
+  tbl_summary(
+    label = list(
+      "conditions___1" ~ "Hypertension",
+      "conditions___2" ~ "Obesity",
+      "conditions___3" ~ "Chronic lung disease (COPD, asthma, pulmonary fibrosis)",
+      "conditions___4" ~ "Diabetes Mellitus",
+      "conditions___5" ~ "Chronic immune suppression (organ transplant, HIV)",
+      "conditions___6" ~ "Coronary artery disease",
+      "conditions___7" ~ "High cholesterol",
+      "conditions___8" ~ "Heart arrhythmias",
+      "conditions___9" ~ "Major depression",
+      "conditions___10" ~ "Anxiety",
+      "conditions___11" ~ "PTSD",
+      "conditions___12" ~ "Cancer",
+      "conditions___13" ~ "Other (please describe)",
+      "conditions___14" ~ "None"),
+    value = everything() ~ "1"
+  )
+```
+
+```{r}
+# All who selected "Other" did not provide free text so far
+# commented here 
+other_condition_n <- t1 %>%
+  filter(conditions___14 == 1) %>%
+  select(conditions_other) %>%
+  drop_na() %>%
+  nrow()
+
+if (other_condition_n >= 1) {
+  t1 %>%
+    filter(conditions___14 == 1) %>%
+    select(conditions_other) %>%
+    tbl_summary()
+}
+```
+
+## Have you received or increased your dose of any of the following medications specifically for Long COVID or Long COVID symptoms? (select all that apply)
+```{r}
+# Order the medications from most frequent to least frequent
+ordered_medications <- t1 %>% 
+  select(medications___1:medications___13) %>%
+  mutate(across(everything(), ~ as.numeric(.x))) %>%
+  summarise_all(list(sum)) %>%
+  pivot_longer(cols = everything(), names_to = "medication", values_to = "count") %>%
+  arrange(desc(count)) %>%
+  pull(medication)
+```
+
+```{r}
+t1 %>%
+  select(medications___1:medications___13) %>%
+  select(all_of(ordered_medications)) %>%  
+  tbl_summary(
+    label = list(
+      "medications___1" ~ "Paxlovid",
+      "medications___2" ~ "Low dose naltrexone",
+      "medications___3" ~ "Heart rate controlling agents (beta-blockers, calcium channel blockers, ivabradine)",
+      "medications___4" ~ "Prednisone",
+      "medications___5" ~ "Lung inhaler medications (Symbicort, Advair/Wixela, Breo)",
+      "medications___6" ~ "Midodrine",
+      "medications___7" ~ "Fludricortisone",
+      "medications___8" ~ "SSRIs/SNRIs",
+      "medications___9" ~ "Memantine",
+      "medications___10" ~ "Adderall/Ritalin",
+      "medications___11" ~ "Modafinil",
+      "medications___12" ~ "Other (please specify)",
+      "medications___13" ~ "None"),
+    value = everything() ~ "1"
+  )
+```
+
+### Other medicine (please specify)
+```{r}
+# All who selected "Other" 
+other_medication_n <- t1 %>%
+  filter(medications___13 == 1) %>%
+  select(other_med) %>%
+  drop_na() %>%
+  nrow()
+
+if (other_medication_n >= 1) {
+  t1 %>%
+    filter(medications___13 == 1) %>%
+    select(other_med) %>%
+    tbl_summary()
+}
+```
+
+## Have you received any of the following therapies specifically for Long COVID or Long COVID symptoms? (select all that apply)
+```{r}
+ordered_therapies <- t1 %>%
+  select(therapies___13:therapies___21) %>%
+  mutate(across(everything(), ~ as.numeric(.x))) %>%
+  summarise_all(list(sum)) %>%
+  pivot_longer(cols = everything(), names_to = "therapy", values_to = "count") %>%
+  arrange(desc(count)) %>%
+  pull(therapy)
+```
+
+```{r}
+t1 %>%
+  select(therapies___13:therapies___21) %>%
+  select(all_of(ordered_therapies)) %>%
+  tbl_summary(
+    label = list(
+      "therapies___13" ~ "Speech therapy/cognitive training",
+      "therapies___14" ~ "Physical therapy",
+      "therapies___15" ~ "Occupational therapy",
+      "therapies___16" ~ "Group therapy/peer support",
+      "therapies___17" ~ "Pulmonary rehab",
+      "therapies___18" ~ "Counseling/mental or behavioral health therapy",
+      "therapies___19" ~ "Complementary/alternative therapies (examples like acupuncture, supplements, chiropractic, etc.)",
+      "therapies___20" ~ "Other (please specify)",
+      "therapies___21" ~ "None"),
+    value = everything() ~ "1"
+  )
+```
+
+## Other services (please specify)
+```{r}
+# All who selected "Other" 
+other_therapies_n <- t1 %>%
+  filter(therapies___20 == 1) %>%
+  select(other_med) %>%
+  drop_na() %>%
+  nrow()
+
+if (other_therapies_n >= 1) {
+  t1 %>%
+    filter(therapies___20 == 1) %>%
+    select(other_service) %>%
+    tbl_summary()
+}
+```
+
+# PROMIS Global Health
+## Global physical and mental health subscores
+* PROMIS physical health and mental health subscores range from 4 (min) - 20 (max) 
+```{r}
+data %>%
+  select(promis_global_phys, promis_global_ment, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    statistic = all_continuous() ~ "{mean} ({sd}); [{min}, {median}, {max}]",
+    label = list(
+      promis_global_phys ~ "Global physical health",
+      promis_global_ment ~ "Global mental health"
+    )
+  )
+```
+
+
+## Promis Global Health Physical and Mental Health T-Scores
+```{r}
+# Display the tables of T-Score and their averages
+data %>%
+  select(promis_pht, promis_mht, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    statistic = all_continuous() ~ "{mean} ({sd}); [{min}, {median}, {max}]",
+    label = list(
+      promis_pht ~ "Global physical health T-score",
+      promis_mht ~ "Global mental health T-score"
+      # promis_global01 ~ "In general, would you say your health is:",
+      # promis_global09r ~ "In general, please rate how well you carry out your usual social activities and roles."
+    )
+  )
+```
+
+## In general, would you say your health is:
+```{r}
+data %>%
+  select(promis_global01, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    statistic = all_continuous() ~ "{mean} ({sd}); [{min}, {median}, {max}]",
+    label = list(
+      # promis_global_phys ~ "Global physical health",
+      # promis_global_ment ~ "Global mental health",
+      # promis_global01 ~ "In general, would you say your health is:",
+      # promis_global09r ~ "In general, please rate how well you carry out your usual social activities and roles."
+    )
+  )
+```
+
+
+## In general, please rate how well you carry out your usual social activities and roles.
+```{r}
+data %>%
+  select(promis_global09r, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    statistic = all_continuous() ~ "{mean} ({sd}); [{min}, {median}, {max}]",
+    label = list(
+      # promis_global_phys ~ "Global physical health",
+      # promis_global_ment ~ "Global mental health",
+      # promis_global01 ~ "In general, would you say your health is:",
+      # promis_global09r ~ "In general, please rate how well you carry out your usual social activities and roles."
+    )
+  )
+```
+
+
+# PASC
+```{r}
+data %>%
+  select(pasc_score, pasc_positive, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    statistic = list(pasc_score ~ "{mean} ({sd}); [{min}, {median}, {max}]"),
+    value = list(pasc_positive ~ "1"))
+```
+
+<!-- ## Do you think you currently have symptoms or health problems resulting from your COVID infection? -->
+```{r}
+# data %>%
+#   select(ps_ptpasc, redcap_event_name) %>%
+#   tbl_summary(
+#     by = redcap_event_name
+#   )
+```
+
+<!-- ## Symptoms -->
+<!-- * n.b. denominator is a subset to those that answered "Yes" to the question "Do you think you currently have symptoms or health problems resulting from your COVID infection?" -->
+<!-- * n.b. denominator for ps_menstrual and ps_menopause is a subset to the above and a response of "Female", "Transgender Male", "Non-binary", "Other, please describe", or "Prefer not to answer" to the question "What is your gender identity?" -->
+
+```{r}
+#| eval: false
+# This chunk begins the section for generating the multi-colored figure in the
+# report.
+core_symptoms <- t1 %>%
+  select(ps_fatigue:ps_sex) %>%
+  names()
+
+# *** rename headache_freq headache_sev to standardized suffixes
+# itching to standardized suffixes
+
+# This could work as a skeleton for a for-loop to display frequencies and 
+# proportions, but it would be a lot of tables
+# for (s in core_symptoms) {
+#   # print(s)
+#   t1 %>%
+#     filter(ps_ptpasc == "Yes") %>%
+#     select(!!sym(s)) %>%
+#     tbl_summary()
+# }
+
+# Another option is to display as a chart with binary responses
+pasc_hist <- t1 %>%
+  filter(ps_ptpasc == "Yes") %>%
+  select(all_of(core_symptoms)) %>%
+  mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes"), 1, 0))) %>%
+  pivot_longer(cols = everything(), names_to = "symptom", values_to = "yes") %>%
+  group_by(symptom) %>%
+  summarise(total_endorsed = sum(yes)) %>%
+  mutate(symptom = factor(symptom, levels = core_symptoms))
+ 
+# Get a denominator all patients
+denominator_all <- t1 %>%
+  filter(ps_ptpasc == "Yes") %>%
+  nrow()
+
+# Get a denominator for ps_menstrual:ps_menopause which is a subset of those
+# that are not Male or Transgender Female
+denominator_subset <- t1 %>%
+  filter(ps_ptpasc == "Yes") %>%
+  filter(!patient_gender %in% c("Male", "Transgender Female")) %>%
+  select(patient_gender, ps_menstrual:ps_menopause) %>%
+  nrow()
+
+pasc_hist %<>%
+  mutate(percent = str_c("(",
+    round(
+      ifelse(symptom %in% c("ps_menstrual", "ps_menopause"), total_endorsed / denominator_subset, total_endorsed / denominator_all),
+      2) * 100, "%)")) %>%
+  mutate(n_per = str_c(total_endorsed, " ", percent))
+
+ordered_symptoms <- pasc_hist %>%
+  arrange(total_endorsed) %>%
+  pull(symptom)
+```
+
+```{r, fig.height = 6.5, fig.width=6.5, fig.dpi = 600}
+#| eval: false
+pasc_hist %>%
+  mutate(symptom = factor(symptom, levels = ordered_symptoms)) %>%
+  ggplot(aes(x = symptom, y = total_endorsed, fill = symptom)) +
+  geom_col() +
+  geom_text(
+    aes(label = n_per), 
+          hjust = -0.25,
+          size = 3) +  
+  theme_minimal() +
+  lims(y = c(0, 35)) +
+  coord_flip() +
+  theme(legend.position = "none") +
+  labs(x = "Symptom", y = "Number endorsed (percent)")
+```
+
+
+<!-- ## Average symptom burden, severity, and frequency -->
+<!-- * Symptoms ordered by frequency as in the previous chart -->
+<!-- * All burden, severity, and frequency questions are branched and presented only if patient endorsed experiencing the given symptom. -->
+<!-- * "ps_sense", "ps_headache", "ps_itching", "ps_bald", "ps_menstrual", "ps_menopause", "ps_fertility" "ps_sex" not assessed for frequency or severity. -->
+```{r, fig.height = 8, fig.width=6.5, fig.dpi = 600}
+#| eval: false
+# Display a table of the burden, severity, and frequency
+pasc_sx_means %>%
+  mutate(symptom = factor(symptom, levels = fct_recode(ordered_symptoms, "ps_eyedry" = "ps_dryeyes") )) %>%
+  ggplot(., aes(x = dimension, y = symptom, fill = mean)) +
+  geom_tile(color = "white", linewidth = 0.5, width = 0.5) +
+  geom_text(aes(label = scales::number(mean, accuracy = 0.01)), color = "white", size = 3.5) +
+  scale_fill_gradient(
+    low = "steelblue",
+    high = "tomato",
+    guide = "none") +
+  labs(
+    title = "", 
+    x = "Dimension", 
+    y = "Symptom") +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    # axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right") +
+  scale_y_discrete(expand = c(0, 0)) +            # remove y padding
+  coord_fixed(ratio = .3) +                       # taller cells → slimmer columnslook
+  theme_minimal(base_size = 12)                   # add grid lines
+```
+
+
+# Experiences of Stigma
+## Have you had one or more appointments with medical providers at a primary care clinic in the past three months?
+```{r}
+data %>%
+  select(pcc_appts, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+## Mean score of "lack of understanding" scale from Illness Invalidation Inventory PCC
+* n.b. Subsets to those that answered "Yes" to the question "Have you had one or more appointments with medical providers at a primary care clinic in the past three months?"
+* Scale ranges from 1(min) to 5(max), with 1 indicating the lowest perceived understanding from medical providers and 5 indicated the highest perceived understanding.
+* Only asked at T1 and T5
+```{r}
+# This should be two variables lack_understand_pcc, and lack_understand_mdc, and each is subset to "Yes" in appts_mdc or appts_pcc
+data %>%
+  filter((redcap_event_name %in% c("t1", "t5")), pcc_appts == "Yes") %>%
+  select(lou_pcc, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    type = everything() ~ "continuous",
+    statistic = everything() ~ "{mean} ({sd}); [{min}, {median}, {max}]"
+  )
+```
+
+<!-- INDIVIDUAL SCORES -->
+## Individual questions: How often in the past 3 months did medical professionals at your primary care clinic react to you in the following ways:
+### Medical professionals took me seriously.
+```{r}
+data %>%
+  filter(pcc_appts == "Yes", (redcap_event_name %in% c("t1", "t5"))) %>%
+  select(serious_pcc, redcap_event_name) %>%
+  mutate(across(serious_pcc, ~ factor(.x, levels = c( 
+      "Never",
+      "Rarely",
+      "Sometimes", 
+      "Often",
+      "Very Often")))) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Medical professionals understood the consequences of my health problems or illness.
+```{r}
+data %>%
+  filter(pcc_appts == "Yes", (redcap_event_name %in% c("t1", "t5"))) %>%
+  select(consequences_pcc, redcap_event_name) %>%
+  mutate(across(consequences_pcc, ~ factor(.x, levels = c( 
+      "Never",
+      "Rarely",
+      "Sometimes", 
+      "Often",
+      "Very Often")))) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Medical professionals gave me the chance to talk about what is on my mind.
+```{r}
+data %>%
+  filter(pcc_appts == "Yes", (redcap_event_name %in% c("t1", "t5"))) %>%
+  select(talk_pcc, redcap_event_name) %>%
+  mutate(across(talk_pcc, ~ factor(.x, levels = c( 
+      "Never",
+      "Rarely",
+      "Sometimes", 
+      "Often",
+      "Very Often")))) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+## Have you had one or more appointments with medical providers at a multi-disciplinary Long COVID clinic in the past three months?
+```{r}
+data %>%
+  select(mdc_appts, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+
+
+## Individual questions: How often in the past 3 months did medical professionals at your primary care clinic react to you in the following ways:
+### Medical professionals took me seriously.
+```{r}
+data %>%
+  filter(mdc_appts == "Yes", (redcap_event_name %in% c("t1", "t5"))) %>%
+  select(serious_mdc, redcap_event_name) %>%
+  mutate(across(serious_mdc, ~ factor(.x, levels = c( 
+      "Never",
+      "Rarely",
+      "Sometimes", 
+      "Often",
+      "Very Often")))) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Medical professionals understood the consequences of my health problems or illness.
+```{r}
+data %>%
+  filter(mdc_appts == "Yes", (redcap_event_name %in% c("t1", "t5"))) %>%
+  select(consequences_mdc, redcap_event_name) %>%
+  mutate(across(consequences_mdc, ~ factor(.x, levels = c( 
+      "Never",
+      "Rarely",
+      "Sometimes", 
+      "Often",
+      "Very Often")))) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Medical professionals gave me the chance to talk about what is on my mind.
+```{r}
+data %>%
+  filter(mdc_appts == "Yes", (redcap_event_name %in% c("t1", "t5"))) %>%
+  select(talk_mdc, redcap_event_name) %>%
+  mutate(across(talk_mdc, ~ factor(.x, levels = c( 
+      "Never",
+      "Rarely",
+      "Sometimes", 
+      "Often",
+      "Very Often")))) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+<!-- LEFT OFF HERE, NEED TO DISPLAY EVERYTHING BY TIME POINT -->
+# Health Related Social Needs (t1 & t5 only)
+## Living Situation
+### What is your living situation today?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(living_sit, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Think about the place you live. Do you have problems with any of the following?
+```{r}
+# t1 %>%
+#   select(living_probs___1:living_probs___8) %>%
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(living_probs___1:living_probs___8, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    value = everything() ~ "1",
+    label = list(
+      living_probs___1 ~ "Pests such as bugs, ants, or mice",
+      living_probs___2 ~ "Mold",
+      living_probs___3 ~ "Lead paint or pipes",
+      living_probs___4 ~ "Lack of heat",
+      living_probs___5 ~ "Oven or stove not working",
+      living_probs___6 ~ "Smoke detectors missing or not working",
+      living_probs___7 ~ "Water leaks",
+      living_probs___8 ~ "None of the above"
+    )
+  )
+```
+
+## Food
+### Within the past 12 months, were you worried that your food would run out before you got money to buy more?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(redcap_event_name, food_worry) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Within the past 12 months, has the food you bought just didn't last and you didn't have money to get more?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(redcap_event_name, food_last) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+## Transportation
+### In the past 12 months, has lack of reliable transportation kept you from medical appointments, meetings, work or from getting things needed for daily living?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(redcap_event_name, transport) %>%
+  tbl_summary( 
+    by = redcap_event_name,
+    type = list(transport ~ "categorical")
+  )
+```
+
+## Utilities
+### In the past 12 months has the electric, gas, oil, or water company threatened to shut off services in your home?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(redcap_event_name, utlities) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    type = list(utlities ~ "categorical")
+  )
+```
+
+## Financial Strain
+### How hard is it for you to pay for the very basics like food, housing, medical care, and heating? Would you say it is:
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(redcap_event_name, fin_strain) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    type = list(fin_strain ~ "categorical")
+  )
+```
+
+## Family & Community Support
+### If for any reason you need help with day-to-day activities such as bathing, preparing meals, shopping, managing finances, etc., do you get the help you need?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(redcap_event_name,help_daytoday) %>%
+  mutate(help_daytoday = factor(help_daytoday, levels = c("I don't need any help", "I get all the help I need", "I could use a little more help", "I need a lot more help"))) %>%
+  tbl_summary( 
+    by = redcap_event_name,
+    type = list(help_daytoday ~ "categorical")
+  )
+```
+
+### How often do you feel lonely or isolated from those around you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t1", "t5")) %>%
+  select(redcap_event_name, lonely) %>%
+  mutate(lonely = factor(lonely, levels = c("Never", "Rarely", "Sometimes", "Often", "Always"))) %>%
+  tbl_summary( 
+  by = redcap_event_name,
+    type = list(lonely ~ "categorical")
+  )
+```
+
+## Summary of needs by domain
+```{r}
+hrsn_data %>%
+  select(
+    living_need,
+    food_need,
+    transport,
+    utlities,
+    fin_strain,
+    social_need,
+    hrsn_need_score,
+    redcap_event_name) %>%
+  mutate(across(living_need:social_need, ~ factor(.x, levels = c(1, 0)))) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    value = everything() ~ "1",
+    missing = "no",
+    type = list(hrsn_need_score ~ "continuous"),
+    statistic = list(hrsn_need_score ~ "{mean}, ({sd}); [{min}, {median}, {max}]"),
+    label = list(transport ~ "transportation_need", utlities ~ "utilities_need"))
+```
+
+
+# Experiences with care (t2 -t4 only)
+
+## PCC
+```{r}
+# PCC questions
+data %<>%
+  mutate(across(c(explain_pcc:medinfo_pcc, helpful_pcc:courtesy_pcc), ~ factor(.x, levels = c(
+    "Yes, definitely",
+    "Yes, somewhat",
+    "No"))))
+
+data %<>%
+  mutate(across(test_pcc:results_pcc, ~ factor(.x, levels = "Yes", "No")))
+```
+
+### During your most recent visit, did this provider explain things in a way that was easy to understand?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(explain_pcc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### During your most recent visit, did this provider listen carefully to you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(listen_pcc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### During your most recent visit, did this provider show respect for what you had to say?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(respect_pcc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### During your most recent visit, did this provider spend enough time with you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(time_pcc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### During your most recent visit, did this provider have the medical information they needed about you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(medinfo_pcc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+
+### During your most recent visit, did this provider order a blood test, x-ray, or other test for you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(test_pcc, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    type = list(everything() ~ "categorical"))
+```
+
+### Did someone from this provider's office follow up to give you those results?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(results_pcc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Thinking about your most recent visit, was the staff from this provider's office as helpful as you thought they should be?
+
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(helpful_pcc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Thinking about your most recent visit, did the staff from this provider's office treat you with courtesy and respect?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), pcc_appts == "Yes") %>%
+  select(courtesy_pcc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+## MDC
+```{r}
+# MDC questions
+data %<>%
+  mutate(across(c(explain_mdc:medinfo_mdc, helpful_mdc:courtesy_mdc), ~ factor(.x, levels = c(
+    "Yes, definitely",
+    "Yes, somewhat",
+    "No"))))
+
+data %<>%
+  mutate(across(test_mdc:results_mdc, ~ factor(.x, levels = "Yes", "No")))
+```
+
+### During your most recent visit, did this provider explain things in a way that was easy to understand?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(explain_mdc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### During your most recent visit, did this provider listen carefully to you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(listen_mdc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### During your most recent visit, did this provider show respect for what you had to say?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(respect_mdc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### During your most recent visit, did this provider spend enough time with you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(time_mdc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### During your most recent visit, did this provider have the medical information they needed about you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(medinfo_mdc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+
+### During your most recent visit, did this provider order a blood test, x-ray, or other test for you?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(test_mdc, redcap_event_name) %>%
+  tbl_summary(
+    by = redcap_event_name,
+    type = list(everything() ~ "categorical"))
+```
+
+### Did someone from this provider's office follow up to give you those results?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(results_mdc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Thinking about your most recent visit, was the staff from this provider's office as helpful as you thought they should be?
+
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(helpful_mdc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```
+
+### Thinking about your most recent visit, did the staff from this provider's office treat you with courtesy and respect?
+```{r}
+data %>%
+  filter(redcap_event_name %in% c("t2", "t3", "t4"), mdc_appts == "Yes") %>%
+  select(courtesy_mdc, redcap_event_name) %>%
+  tbl_summary(by = redcap_event_name)
+```

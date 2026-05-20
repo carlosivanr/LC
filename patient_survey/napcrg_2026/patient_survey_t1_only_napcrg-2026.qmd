@@ -1,5 +1,5 @@
 ---
-title: "AHRQ Long COVID - T1 Patient Survey Results"
+title: "AHRQ Long COVID - T1 Patient Survey Results NAPCRG 2026 Abstract"
 
 date: "`r format(Sys.Date(), '%m-%d-%Y')`"
 
@@ -12,6 +12,13 @@ format:
 execute: 
   echo: false
 ---
+
+```{r}
+# Carlos Rodriguez PhD. CU Anschutz, Depapartment of Family Medicine
+# Description:
+# This qmd file is used to generate T1 results capped at February 28, 2026 for
+# the 2026 NAPCRG conference.
+```
 
 ```{r, message=FALSE, warning=FALSE}
 library(magrittr, include = "%<>%")
@@ -110,6 +117,43 @@ data %<>%
   filter(!record_id %in% c(test_ids, duplicated_ids))
 ```
 
+```{r}
+# These represent referrals that were contacted
+total_ids <- data %>%
+  distinct(record_id) %>%
+  pull(record_id)
+
+# Patients that consented before February 28 2026
+ids <- data %>%
+  # select(patient_consent_form_timestamp) %>%
+  mutate(date = as.Date(format(patient_consent_form_timestamp, format = "%Y-%m-%d"))) %>%
+  filter(date <= "2026-02-28") %>%
+  pull(record_id)
+
+# 
+# data %>%
+#   drop_na(patient_consent_form_timestamp) %>%
+#   select(patient_consent_form_timestamp) %>%
+#   arrange(desc(patient_consent_form_timestamp))
+
+# data %>%
+#   filter(!record_id %in% ids) %>%
+#    select(patient_consent_form_timestamp)
+
+data %<>%
+  filter(record_id %in% ids)
+```
+
+```{r}
+data %>%
+  mutate(date = format(patient_consent_form_timestamp, format = "%Y-%m")) %>%
+  select(date) %>%
+  drop_na() %>%
+  group_by(date) %>%
+  count() %>%
+  ungroup() %>%
+  summarise(mean = mean(n))
+```
 
 ```{r}
 # /////////////////////////////// Data Clean Up ///////////////////////////////
@@ -163,7 +207,6 @@ t1 %<>%
                                TRUE ~ NA_character_
                                ),
          age_group = factor(age_group, levels = c("18-34", "35-64", "65+"), ordered = TRUE))
- 
 ```
 
 ## Age, gender, sexual orientation
@@ -633,7 +676,6 @@ t2 %>%
 
 
 ## Promis Global Health Physical and Mental Health T-Scores
-
 ```{r}
 # Calculate the PROMIS T-scores
 
@@ -943,7 +985,6 @@ t2 %>%
 * Symptoms ordered by frequency as in the previous chart
 * All burden, severity, and frequency questions are branched and presented only if patient responded endorsed experiencing the given symptom.
 * "ps_sense", "ps_headache", "ps_itching", "ps_bald", "ps_menstrual", "ps_menopause", "ps_fertility" "ps_sex" not assessed for frequency or severity.
-
 ```{r}
 # Display a table of the burden, severity, and frequency 
 # To display a table where each column represents the mean of burden, frequency, and severity
@@ -1161,7 +1202,7 @@ t1 %>%
   )
 ```
 
-## Individual questions: How often in the past 3 months did medical professionals at your primary care clinic react to you in the following ways:
+## Individual questions: How often in the past 3 months did medical professionals at your multi-disciplinary Long COVID clinic react to you in the following ways:
 ### Medical professionals took me seriously.
 ```{r}
 t1 %>%

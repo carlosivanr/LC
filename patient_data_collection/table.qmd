@@ -1,0 +1,43 @@
+---
+title: "TBD"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format: 
+  docx:
+    toc: true
+    embed-resources: true
+    reference-doc: "D:/custom-reference-doc.docx"
+
+execute: 
+  echo: false
+---
+
+
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
+# AHRQ Long COVID
+# /////////////////////////////////////////////////////////////////////////////
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+library(tidyverse)
+library(gtsummary)
+library(dfmtbx)
+```
+
+```{r, message=FALSE, warning=FALSE}
+data <- pull_redcap_report(Sys.getenv("LC_deident"), "194691", "label", "raw", "false")
+data_numeric <- pull_redcap_report(Sys.getenv("LC_deident"), "194691", "raw", "raw", "false")
+labels <- pull_redcap_report(Sys.getenv("LC_deident"), "194691", "label", "label", "false")
+```
+
+
+```{r}
+data %>%
+  select(practicename, outcome) %>% 
+  mutate(outcome = fct_na_value_to_level(outcome, level = "Missing")) %>%
+  tbl_summary(by = outcome)
+```
