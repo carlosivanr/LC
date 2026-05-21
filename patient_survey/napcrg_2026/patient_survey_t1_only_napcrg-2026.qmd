@@ -1245,6 +1245,7 @@ t1 %>%
   tbl_summary()
 ```
 
+
 # Health Related Social Needs
 ## Living Situation
 ### What is your living situation today?
@@ -1252,6 +1253,10 @@ t1 %>%
 t1 %>%
   select(living_sit) %>%
   tbl_summary()
+```
+
+```{r}
+
 ```
 
 ### Think about the place you live. Do you have problems with any of the following?
