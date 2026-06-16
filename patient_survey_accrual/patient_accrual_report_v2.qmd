@@ -150,8 +150,6 @@ duplicated_ids <-
       ) %>%
     pull(record_id)
 
-
-
 # Remove the test and duplicated ids
 data %<>%
   filter(!record_id %in% c(test_ids, duplicated_ids))
@@ -252,9 +250,14 @@ no_contact_ids <- data %>%
 #  Create a dataframe with binary variables to tabulate the number of screened, 
 # enrolled, and consented patients.
 tab_data <- data %>%
-  select(record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete) %>%
+  select(
+    record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete,
+    participatingclinic, pcc_or_mdc_name) %>%
   group_by(record_id) %>%
-  fill(enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, .direction = "updown") %>%
+  fill(
+    enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, 
+    participatingclinic, pcc_or_mdc_name,  
+    .direction = "updown") %>%
   slice_head() %>%
   ungroup() %>%
   # Convert missing values in enrollstatus to Unknown/ could be not yet screened or contacted but no response
@@ -272,6 +275,16 @@ tab_data <- data %>%
 data %>%
   select(study_label) %>%
   drop_na() %>%
+  tbl_summary()
+```
+
+# Referring clinic (pcc_or_mdc_name)
+* Subsets to those that answered "Yes" to the question "Are you seeking care from a participating study clinic?"
+* Variable implemented in mid-May 2026
+```{r}
+tab_data %>% 
+  filter(participatingclinic == "Yes") %>%
+  select(pcc_or_mdc_name) %>%
   tbl_summary()
 ```
 
@@ -398,16 +411,21 @@ t4_rates <- data %>%
     select(record_id, experiences_with_care_complete) %>%
     rename(t4_status = experiences_with_care_complete)
 
-
+t5_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "t5_survey_arm_1") %>%
+    select(record_id, healthrelated_social_needs_complete) %>%
+    rename(t5_status = healthrelated_social_needs_complete)
 
 rates <- 
   t1_rates %>%
   left_join(t2_rates, by = "record_id") %>%
   left_join(t3_rates, by = "record_id") %>%
   left_join(t4_rates, by = "record_id") %>%
+  left_join(t5_rates, by = "record_id") %>%
+
   left_join(days_since_t1, by = "record_id") %>%
   # filter(record_id == 3) %>% # !!! Coment out after troubleshooting
-  mutate(across(t2_status:t4_status, ~ ifelse(record_id %in% incomplete_t1_pasc$record_id, "Incomplete T1 PASC", .x))) %>%
+  mutate(across(t2_status:t5_status, ~ ifelse(record_id %in% incomplete_t1_pasc$record_id, "Incomplete T1 PASC", .x))) %>%
   
   # If the value is missing AND the days since t1 is less than 90, then the 
   # paticipant isn't due for a T2 yet, they haven't been in the study for
@@ -457,8 +475,22 @@ rates <-
   mutate(t4_status = ifelse(
     (is.na(t4_status) | t4_status == "Incomplete") & days_since_t1 >= 284, 
     "Incomplete (past window)", 
-    t4_status))
+    t4_status)) %>%
 
+  # Modify t5 status ----------------------------------------------------------
+  mutate(t5_status = ifelse(
+    is.na(t5_status) & days_since_t1 < 360, "Not due for T5", t5_status)) %>%
+  
+  mutate(t5_status = ifelse(
+    is.na(t5_status) & days_since_t1 >= 360 & days_since_t1 < 374,
+      "Incomplete (within window)",
+      t5_status)) %>%
+
+  mutate(t5_status = ifelse(
+    (is.na(t5_status) | t5_status == "Incomplete") & days_since_t1 >= 374,
+    "Incomplete(past window)",
+    t5_status
+  ))
 ```
 
 ```{r}

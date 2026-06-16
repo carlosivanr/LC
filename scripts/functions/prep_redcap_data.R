@@ -1,4 +1,13 @@
 # /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez Ph.D. CU Anschutz Dept. of Family Medicine
+# Description: This script will download and process AHRQ Long COVID RedCap
+# Project ID 25710 Data. This script is designed to be a centralized data
+# processing script that can be used in several reports such as patient 
+# accrual, patient survey, patient data collection tables, and others.
+
+# Status: Work in progress
+# Last updated: 05/30/2026
+# /////////////////////////////////////////////////////////////////////////////
 
 # Pull report 176060 as labeled data
 # Corresponds to patient_enrollment report in REDCap
@@ -83,6 +92,28 @@ duplicated_ids <-
 # Remove the test and duplicated ids
 data %<>%
   filter(!record_id %in% c(test_ids, duplicated_ids))
+
+
+# Capture those that completed the enrollment step
+enrollment_completed_ids <- data %>%
+  filter(enrollstatus == "Enrollment completed") %>%
+  pull(record_id)
+
+# ids flagged as loss to follow up
+ltfu_ids <- data %>%
+  filter(grepl("ltfu", study_label, ignore.case = TRUE)) %>%
+  pull(record_id)
+
+data %<>%
+  mutate(enrollstatus = ifelse(record_id %in% ltfu_ids, "LTFU", enrollstatus))
+
+# Ids that declined
+declined_ids <- data %>%
+  filter(grepl("declined", study_label, ignore.case = TRUE)) %>%
+  pull(record_id)
+
+data %<>%
+  mutate(enrollstatus = ifelse(record_id %in% declined_ids, "Declined", enrollstatus))
 
 
 # /////////////////////////////// Data Clean Up ///////////////////////////////
@@ -264,11 +295,11 @@ data %<>%
 # t1 and t5 get ps_pasc with symptom severity
 # t2 - t4 only get ps2_pasc with out symptom severity
 # ps2_pasc subsets to those who answer yes or I don't know
+
 # These are the 12 symptoms used to calculate a PASC score
 # The responses between ps1 and ps2 are a bit different
-# With ps2 pasc, we can asses PASC score in the past 3 months
+# With ps2 pasc, we can assess PASC score in the past 3 months
 # and in the past 30 days, whereas ps1 is currently.
-
 data %<>%
   mutate(
     ps_sense = coalesce(ps_sense, ps2_sense),
@@ -305,7 +336,8 @@ pasc_symptoms <- c(
 # These are the weights to multiply each binary symptom value
 pasc_symptom_scores <- c(8, 7, 4, 3, 3, 2, 2, 1, 1, 1, 1, 1)
 
-# Create a separate data frame subset to those that received the branching question
+# Create a separate data frame subset to those that received the branching 
+# question.
 pasc_data <- data %>%
   filter(
     ps_ptpasc == "Yes" |
@@ -367,33 +399,52 @@ ps2_30d <- bind_cols(
   select(pasc_score_30d, pasc_positive_30d)
 )
 
+
+# Symptoms within the past 3 months or 30 days
+ps2 <- bind_cols(
+  pasc_data %>%
+  filter(
+    !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
+  select(record_id, redcap_event_name),
+
+  pasc_data %>%
+  filter(
+    !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
+  select(all_of(pasc_symptoms)) %>%
+  mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes"), 1, 0))) %>%
+  sweep(., 2, pasc_symptom_scores, `*`) %>%
+  mutate(pasc_score = rowSums(across(everything()))) %>%
+  mutate(pasc_positive = ifelse(pasc_score >= 12, 1, 0)) %>%
+  select(pasc_score, pasc_positive)
+)
+
+
+
+
 # Merge scores back into main data frame
+# commented out because no scoring 3mo and 30d separately was not the intended approach
+
+# data %>%
+  # left_join(ps1, by = c("redcap_event_name", "record_id")) %>%
+  # left_join(ps2_3mo, by = c("redcap_event_name", "record_id")) %>% 
+  # left_join(ps2_30d, by = c("redcap_event_name", "record_id")) 
+
 data %<>%
-  left_join(ps1, by = c("redcap_event_name", "record_id")) %>%
-  left_join(ps2_3mo, by = c("redcap_event_name", "record_id")) %>%
-  left_join(ps2_30d, by = c("redcap_event_name", "record_id"))
+  left_join(
+    bind_rows(ps1, ps2), 
+    by = c("redcap_event_name", "record_id")
+)
 
 
 # Experiences of stigma -------------------------------------------------------
-# Only administered at t1 and t5 and is asked in reference to experienecs at
-# PCCs and MDCs if a patient reports a visit in those site types within the
-# past 3 months.
 # This instrument is the lack of understanding subscale from the illness
 # invalidation inventory.
 
-data %>%
-  filter(pcc_appts == "Yes") %>%
-  select(serious_pcc:talk_pcc) %>%
-  mutate(across(serious_pcc:talk_pcc, ~ case_match(.x, 
-      "Never" ~ 1,
-      "Rarely" ~ 2,
-      "Sometimes" ~ 3, 
-      "Often" ~ 4,
-      "Very Often" ~ 5,
-      .default = NA))) %>%
-  mutate(na_counts = rowSums(is.na(across(serious_pcc:talk_pcc)))) %>%   
-  mutate(score = rowMeans(across(serious_pcc:talk_pcc), na.rm = TRUE)) %>%
-  mutate(score = ifelse(na_counts >= 2, NA, score))
+# Only administered at t1 and t5 and is asked in reference to experienecs at
+# PCCs and MDCs if a patient reports a visit in those site types within the
+# past 3 months.
+data %<>%
+  mutate(across(c(pcc_appts, mdc_appts), ~ fct_na_value_to_level(factor(.x), level = "Unknown")))
 
 # Create a data frame for the PCC referenced questions
 lou_pcc <- data %>%
@@ -460,6 +511,57 @@ lou_data_long <- lou_data %>%
   ungroup() %>%
   drop_na(score) %>%
   arrange(record_id)
+
+
+lou_pcc_data <- data %>%
+  filter(pcc_appts == "Yes") %>%
+  select(serious_pcc:talk_pcc) %>%
+  mutate(across(serious_pcc:talk_pcc, ~ case_match(.x, 
+      "Never" ~ 1,
+      "Rarely" ~ 2,
+      "Sometimes" ~ 3, 
+      "Often" ~ 4,
+      "Very Often" ~ 5,
+      .default = NA))) %>%
+  summarise(
+    mean_serious = mean(serious_pcc),
+    se_serious = sd(serious_pcc) / sqrt(n()),
+    mean_consequences = mean(consequences_pcc),
+    se_consequences = sd(consequences_pcc) / sqrt(n()),
+    mean_talk = mean(talk_pcc),
+    se_talk = sd(talk_pcc) / sqrt(n()),
+  )
+
+lou_mdc_data <- data %>%
+  filter(mdc_appts == "Yes") %>%
+  select(serious_mdc:talk_mdc) %>%
+  mutate(across(serious_mdc:talk_mdc, ~ case_match(.x, 
+      "Never" ~ 1,
+      "Rarely" ~ 2,
+      "Sometimes" ~ 3, 
+      "Often" ~ 4,
+      "Very Often" ~ 5,
+      .default = NA))) %>%
+  summarise(
+    mean_serious = mean(serious_mdc),
+    se_serious = sd(serious_mdc) / sqrt(n()),
+    mean_consequences = mean(consequences_mdc),
+    se_consequences = sd(consequences_mdc) / sqrt(n()),
+    mean_talk = mean(talk_mdc),
+    se_talk = sd(talk_mdc) / sqrt(n()),
+  )
+
+
+# Get the differences between the two LOU referenced measures
+bind_rows(lou_mdc_data, lou_pcc_data) %>%
+  select(starts_with("mean")) %>%
+  summarise(
+    diff_serious = diff(mean_serious),
+    diff_consequences = diff(mean_consequences),
+    diff_talk = diff(mean_talk),
+    
+  )
+
 
 # Health Related Social Needs (HRSN) from American Community Health Survey
 # Only administer at t1 and t5

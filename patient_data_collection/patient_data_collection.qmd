@@ -1,0 +1,74 @@
+---
+title: "AHRQ Long COVID: Patient Data Collection Tables"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format: 
+  docx:
+    toc: true
+    embed-resources: true
+    reference-doc: "D:/custom-reference-doc.docx"
+
+execute: 
+  echo: false
+---
+
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
+# AHRQ Long COVID
+# 06/01/026
+# Description:
+# This is a house keeping report designed to look at responses of the site
+# redcap variables by study approaches from the de identified data response
+# project, and by enrollment status from the main patient data collection
+# project.
+# /////////////////////////////////////////////////////////////////////////////
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+library(tidyverse)
+library(gtsummary)
+library(dfmtbx)
+```
+
+# RedCap Project ID 35013: Site by Study Approaches (De-Identified Data Response)
+```{r, message=FALSE, warning=FALSE}
+data <- pull_redcap_report(Sys.getenv("LC_deident"), "194691", "label", "raw", "false")
+data_numeric <- pull_redcap_report(Sys.getenv("LC_deident"), "194691", "raw", "raw", "false")
+labels <- pull_redcap_report(Sys.getenv("LC_deident"), "194691", "label", "label", "false")
+```
+
+```{r}
+data %>%
+  select(practicename, outcome) %>% 
+  mutate(outcome = fct_na_value_to_level(outcome, level = "Missing")) %>%
+  tbl_summary(by = outcome) %>%
+  add_overall()
+```
+
+\newpage
+
+<!-- ////////////////////////////////////////////////////////////////////// -->
+
+# RedCap Project ID 25710: Site by Patient Enrollment Status
+```{r}
+# Loads and processes RedCap Project ID 25710 data (longitudinal data) for the 
+# 2nd table in this report
+source("d:/long_covid/scripts/functions/prep_redcap_data.R")
+```
+
+```{r}
+
+```
+
+```{r}
+data %>%
+  filter(redcap_event_name == "screening_and_enro_arm_1") %>%
+  mutate(enrollstatus = 
+    fct_na_value_to_level(factor(enrollstatus), level = "Missing")) %>%
+  select(enrollstatus, site_name) %>%
+  tbl_summary(by = enrollstatus) %>%
+  add_overall()
+```

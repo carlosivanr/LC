@@ -346,11 +346,18 @@ data_wide %>%
 ```
 
 # Exercise
+
 ```{r}
 data_wide %>%
   select(R_EXERCISE_DAYS_PER_WEEK, R_EXERCISE_MINUTES_PER_DAY) %>%
-  # mutate(R_EXERCISE_MINUTES_PER_DAY = factor(as.numeric(R_EXERCISE_MINUTES_PER_DAY))) %>%
+  tbl_summary()
+```
+
+```{r}
+data_wide %>%
+  select(R_EXERCISE_DAYS_PER_WEEK, R_EXERCISE_MINUTES_PER_DAY) %>%
   mutate(across(everything(), ~ as.numeric(.x))) %>%
+  mutate(R_EXERCISE_MINUTES_PER_DAY = R_EXERCISE_MINUTES_PER_DAY * 10) %>%
   tbl_summary(
     # type = list(everything() ~ "categorical"),
     type = list(everything() ~ "continuous"),
@@ -361,13 +368,14 @@ data_wide %>%
   ) %>% bold_labels()
 ```
 
-## Lack of physical activity (<= 150 minuts of exercise per week)
+## Lack of physical activity (<= 150 minutes of exercise per week)
 ```{r}
 ### Less than 150 minutes of moderate or strenuous exercise per week
 exercise <- data_wide %>%
   select(R_EXERCISE_DAYS_PER_WEEK, R_EXERCISE_MINUTES_PER_DAY) %>%
   mutate(across(everything(), ~ as.numeric(.x))) %>%
   mutate(R_EXERCISE_MINUTES_PER_DAY = ifelse(R_EXERCISE_DAYS_PER_WEEK == 0, 0, R_EXERCISE_DAYS_PER_WEEK)) %>%
+  mutate(R_EXERCISE_MINUTES_PER_DAY = R_EXERCISE_MINUTES_PER_DAY * 10) %>%
   mutate(minutes_exer_per_wk = R_EXERCISE_DAYS_PER_WEEK * R_EXERCISE_MINUTES_PER_DAY) %>%
   mutate(less_than_150m_per_wk = ifelse(minutes_exer_per_wk <= 150, 1, 0)) %>%
   mutate(less_than_150m_per_wk = ifelse(is.na(less_than_150m_per_wk), 0, less_than_150m_per_wk))
@@ -573,7 +581,7 @@ data_wide %>%
 ```
 
 
-# AUDI
+# AUDIT
 * https://www.hepatitis.va.gov/alcohol/treatment/audit-c.asp
 ```{r}
 old_names <- data_wide %>%
