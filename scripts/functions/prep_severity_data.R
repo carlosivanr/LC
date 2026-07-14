@@ -49,8 +49,8 @@ make_pasc_tile_plot <- function(df_in, t) {
   pasc_dims_long <- data.frame()
 
     for (d in dimensions) {
-    print(d)
-    print(t)
+    # print(d)
+    # print(t)
 
     # Select the severity dimension names 
     df <- df_in %>%
@@ -78,6 +78,31 @@ make_pasc_tile_plot <- function(df_in, t) {
     mutate(response = ifelse(response == -88, NA, response)) %>%
     group_by(symptom, dimension) %>%
     summarise(mean = mean(response, na.rm = TRUE), .groups = "drop")
+
+  # Get ordered symptoms to display
+  # //////////////////////////////////////////////////////////////////
+  # Set the core symptoms
+  core_symptoms <- df_in %>%
+  select(ps_fatigue:ps_sex) %>%
+  names()
+
+  # Prepare histogram data, where the frequency and percentage of each symptom
+  # is calculated
+  pasc_hist <- df_in %>%
+    select(all_of(core_symptoms)) %>%
+    pivot_longer(cols = everything(), names_to = "symptom", values_to = "yes") %>%
+    group_by(symptom) %>%
+    summarise(total_endorsed = sum(yes, na.rm = TRUE)) %>%
+    mutate(symptom = factor(symptom, levels = core_symptoms))
+
+  # Get an ordered vector of symptoms to organize the bar chart by 
+  # frequency/percentage
+  ordered_symptoms <- pasc_hist %>%
+    arrange(total_endorsed) %>%
+    pull(symptom)
+
+  # //////////////////////////////////////////////////////////////////
+
 
   # Make plot
   plt <- pasc_summarised %>%
