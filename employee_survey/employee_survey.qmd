@@ -151,6 +151,27 @@ data %<>%
   mutate(age_range = factor(age_range, levels = c("Under 30", "30-45", "46-60", "Over 60")))
 ```
 
+```{r}
+#| eval: false
+#| echo: false
+
+data %>% 
+  filter(pcc_or_mdc == "PCC") %>%
+  select(practice_role_pcc) %>%
+  tbl_summary()
+
+data %>% 
+  filter(pcc_or_mdc == "MDC") %>%
+  select(practice_role_mdc) %>%
+  tbl_summary()
+
+
+data %>% 
+  filter(pcc_or_mdc == "MDC") %>%
+  select(mdc_name) %>%
+  tbl_summary()
+```
+
 # Demographics
 - subset of only those that completed
 ```{r}

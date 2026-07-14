@@ -1,5 +1,9 @@
 ---
-title: "AHRQ Long COVID - T1 Patient Survey Results by Site Name (draft)"
+params:
+  by_variable: "by_site_type"
+
+title: "AHRQ Long COVID - T1 Patient Survey Results"
+subtitle: "`r params$by_variable`"
 
 date: "`r format(Sys.Date(), '%m-%d-%Y')`"
 
@@ -49,9 +53,11 @@ library(gtsummary)
 ```
 
 ```{r}
-# Loads pasc severity data and loads functions for displaying the tiles
+# Loads pasc severity data and loads functions for displaying the tiles along 
+# with preparing all data.
 source("d:/long_covid/scripts/functions/prep_redcap_data.R")
 ```
+
 
 ```{r}
 #  Create a dataframe consisting of those that have consented
@@ -69,14 +75,171 @@ tab_data <- data %>%
 
 
 ```{r}
-t1 <- data %>% filter(record_id %in% tab_data$record_id, redcap_event_name == "consent_and_t1_sur_arm_1")
+# eval: false
+# echo: false
+
+# FOR RPPR capped at 06/08/2026
+tab_data <- data %>%
+  select(record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, patient_consent_form_timestamp) %>%
+  group_by(record_id) %>%
+  fill(enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, patient_consent_form_timestamp, .direction = "updown") %>%
+  slice_head() %>%
+  ungroup() %>%
+  # Convert missing values in enrollstatus to Unknown/ could be not yet screened or contacted but no response
+  mutate(
+    across(enrollstatus:healthrelated_social_needs_complete, ~ ifelse(is.na(.x), "Unknown", .x))) %>%
+  filter(patient_consent_form_complete == 1 | patient_consent_form_complete == "Complete")
+
+tab_data %<>%
+  mutate(patient_consent_form_timestamp = as.Date(patient_consent_form_timestamp))
+
+tab_data %<>%
+  filter(patient_consent_form_timestamp < "2026-06-09")
 ```
+
+
+<!-- //////////////////////// REPORT CONFIGURATION //////////////////////// -->
+<!-- This section specifies whether or not to filter the data if the by 
+variable is set to by_clinic, sets rules for displaying pvalues in tables based
+on whether the by variable is set to by_site_type, and sets the test argument 
+to t-test if the argument is by site_type -->
+
+```{r}
+# Set the by variable
+if (params$by_variable == "by_clinic") {
+  data %<>%
+    mutate(by_variable = site_name) 
+  
+} else if (params$by_variable == "by_site_type") {
+  data %<>%
+    mutate(by_variable = site_type)
+  
+} else if (params$by_var == "by_timepoint") {
+  data %<>%
+    mutate(by_variable = redcap_event_name) #could also use timepoint
+}
+
+# If the variable is by timepoint do not filter to t1
+if (params$by_variable != "by_timepoint") {
+  data %<>% 
+    filter(record_id %in% tab_data$record_id, redcap_event_name == "consent_and_t1_sur_arm_1")
+}
+```
+
+```{r}
+t1 <- data %>% 
+    filter(
+      record_id %in% tab_data$record_id, 
+      redcap_event_name == "consent_and_t1_sur_arm_1")
+```
+
+```{r}
+#| echo: false
+#| eval: false
+
+# Confirming Izzys RPPR
+t1 %>%
+  select(race, patient_ethn, gender_group) %>%
+  tbl_strata(
+    strata = patient_ethn,
+    .tbl_fun =
+      ~ .x %>% tbl_summary(by = gender_group)
+  )
+
+
+View( 
+  t1 %>%
+    filter(patient_ethn == "Not Hispanic or Latino") %>%
+    select(record_id, gender_group, patient_ethn, patient_ethn_other)
+)
+
+View( 
+  t1 %>%
+    filter(record_id %in% c(11,13)) %>%
+    select(record_id, gender_group, patient_gender)
+)
+```
+
+```{r}
+# For reports rendered by clinic, only display the clinics where there are 5 
+# or more responses
+
+if (params$by_variable == "by_clinic") {
+# Subset to clinics only with 5 or more participants
+clinics_to_filter <- data %>%
+  group_by(site_name) %>%
+  count() %>%
+  filter(n >= 5) %>%
+  pull(site_name)
+
+data %<>% 
+  filter(site_name %in% clinics_to_filter)
+}
+```
+
+```{r}
+# This sets the report rules for the current versions of the patient survey.
+# If the report is to be displayed by site_type (MDC or PCC) then the rules
+# are to display p-values and use t.test on continuous variables, otherwise
+# do not display any p-values
+report_rules <- list(
+  by_clinic = list(
+    show_p = FALSE
+  ),
+
+  by_site_type = list(
+    show_p = TRUE,
+    test = "t.test"
+  ),
+
+  by_timepoint = list(
+    show_p = FALSE
+  )
+)
+```
+
+```{r}
+# Set the configuration option that is based on the quarto parameter for the
+# "by variable" and the report rules. This will govern what rules to implement
+# in tbl_summary() calls.
+cfg <- report_rules[[params$by_variable]]
+
+# For development
+# cfg <- report_rules[["site_type"]]
+```
+
+```{r}
+# .qmd parameter (sets cfg) ---> cfg (obtained from rules) ---> report rules (set statically in .qmd file)
+```
+
+```{r}
+# If the by_variable is set to site_type, then this function will add_p() and
+# specify to use a t-test assuming equal variances for continuous variables
+# otherwise it should default to the chi-squared or fishers exact for 
+# dichotomous variables. Basically, this is an if then statement that is 
+# governed by the list object cfg which is set in report rules. 
+add_report_statistic <- function(tbl, cfg) {
+
+  if (cfg$show_p) {
+    tbl <- tbl %>%
+      # add_overall() %>%
+      add_p(
+        test = all_continuous() ~ "t.test",
+        test.args = all_tests("t.test") ~ list(var.equal = TRUE)
+      )
+  }
+
+  tbl
+}
+```
+<!-- ////////////////////// END REPORT CONFIGURATION ////////////////////// -->
+
 
 # Patient demographics & characteristics
 All reported data are from clinics where the number of participants was greater than 5.
 ```{r}
 # Patient age gender and sexual orientation
-t1 %<>%
+data %<>%
   mutate(age_group = case_when(
                                patient_age >= 18 & patient_age < 35 ~ "18-34",
                                patient_age >= 35 & patient_age < 65 ~ "35-64",
@@ -87,43 +250,33 @@ t1 %<>%
  
 ```
 
-```{r}
-# Subset to clinics only with 5 or more participants
-clinics_to_filter <- t1 %>%
-  group_by(site_name) %>%
-  count() %>%
-  filter(n >= 5) %>%
-  pull(site_name)
-
-t1 %<>% 
-  filter(site_name %in% clinics_to_filter)
-```
-
 ## Age, gender, sexual orientation
 ```{r}
 # Patient age, gender and sexual orientation
 t1 %>%
-  select(site_name, age_group, patient_gender, patient_sexorient) %>%
+  filter(timepoint == 1) %>% 
+  select(by_variable, age_group, patient_gender, patient_sexorient) %>%
   tbl_summary(
-    by = site_name,
-    # statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    by = by_variable,
     label = list(
       age_group ~ "Age group",
       patient_gender ~ "Gender",
       patient_sexorient ~ "Sexual orientation"
     )
     ) %>%
-    add_overall() #%>% add_p()
+    add_overall() %>%
+    add_report_statistic(cfg)
 ```
 
 ## Race & ethnicity
 ```{r}
 # Patient race and ethnicity
 t1 %>%
-  select(site_name, patient_race___1:patient_race___7, patient_ethn) %>%
+  filter(timepoint == 1) %>% 
+  select(by_variable, patient_race___1:patient_race___7, patient_ethn) %>%
   mutate(across(patient_race___1:patient_race___7, ~ factor(ifelse(is.na(.x), 0, 1), levels = c(0, 1)))) %>%
   tbl_summary(
-    by = site_name,
+    by = by_variable,
     label = list(
       "patient_race___1" ~ "African American or Black",
       "patient_race___2" ~ "American Indian/Alaska Native.",
@@ -141,15 +294,17 @@ t1 %>%
                  patient_race___6 ~ "1",
                  patient_race___7 ~ "1")
   ) %>%
-  add_overall()# %>% add_p()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Patient preferred language
 ```{r}
 # Patient preferred language
 t1 %>%
-  select(site_name, patient_pref_lang) %>%
-  tbl_summary(by = site_name,
+  filter(timepoint == 1) %>% 
+  select(by_variable, patient_pref_lang) %>%
+  tbl_summary(by = by_variable,
     label = list("patient_pref_lang" ~ "Patient preferred lang.")
   ) %>%
   add_overall()
@@ -159,10 +314,11 @@ t1 %>%
 ```{r}
 # Patient race and ethnicity
 t1 %>%
-  select(site_name, patient_insurance___1:patient_insurance___10) %>%
+  filter(timepoint == 1) %>% 
+  select(by_variable, patient_insurance___1:patient_insurance___10) %>%
   mutate(across(patient_insurance___1:patient_insurance___10, ~ factor(.x, levels = c(0,1)))) %>%
   tbl_summary(
-    by = site_name,
+    by = by_variable,
     label = list(
       "patient_insurance___1" ~ "State market place",
       "patient_insurance___2" ~ "Employer provided",
@@ -179,36 +335,42 @@ t1 %>%
     ),
     value = everything() ~ "1"
   ) %>%
-    add_overall() #%>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 ## Patient education level
 ```{r}
 # Patient education level
 t1 %>%
-  select(patient_school, site_name) %>%
-  tbl_summary(by = site_name,
+  filter(timepoint == 1) %>% 
+  select(patient_school, by_variable) %>%
+  tbl_summary(by = by_variable,
     label = list(patient_school ~ "Patient education level")
   ) %>%
-    add_overall() #%>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 ## Patient marital status
 ```{r}
 t1 %>%
-  select(patient_marital, site_name) %>%
-  tbl_summary(by = site_name,
+  filter(timepoint == 1) %>% 
+  select(patient_marital, by_variable) %>%
+  tbl_summary(by = by_variable,
     label = list(patient_marital ~ "Patient marital status")
   ) %>%
-    add_overall() # %>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 ## Patient employment status pre- long COVID
 ```{r}
 t1 %>%
-  select(site_name, patient_employ___1:patient_employ___7) %>%
+  filter(timepoint == 1) %>% 
+  select(by_variable, patient_employ___1:patient_employ___7) %>%
   mutate(across(patient_employ___1:patient_employ___7, ~ factor(.x, levels = c(0,1)))) %>%
-  tbl_summary( by = site_name,
+  tbl_summary( by = by_variable,
     label = list(
       patient_employ___1 ~ "Employed Full-time",
       patient_employ___2 ~ "Employed Part-time",
@@ -220,15 +382,17 @@ t1 %>%
     ),
     value = everything() ~ "1"
   ) %>%
-    add_overall() # %>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 ## Patient employment status current
 ```{r}
 t1 %>%
-  select(site_name, patient_employ_2___1:patient_employ_2___7) %>%
+  filter(timepoint == 1) %>% 
+  select(by_variable, patient_employ_2___1:patient_employ_2___7) %>%
   mutate(across(patient_employ_2___1:patient_employ_2___7, ~ factor(.x, levels = c(0,1)))) %>%
-  tbl_summary(by = site_name,
+  tbl_summary(by = by_variable,
     label = list(
       patient_employ_2___1 ~ "Employed Full-time",
       patient_employ_2___2 ~ "Employed Part-time",
@@ -240,7 +404,8 @@ t1 %>%
       ),
     value = everything() ~ "1"
   ) %>%
-    add_overall() # %>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 # Patient clinical questions
@@ -248,49 +413,47 @@ t1 %>%
 
 ## 	For how many months do you feel you have had Long COVID symptoms (regardless of formal diagnosis)? (For example, 1 year would be 12 months; 2 years would be 24 months; 3 years would be 36 months) 
 ```{r}
-t1 %>%
-  select(months_symps, site_name) %>%
-  tbl_summary(by = site_name,
+data %>%
+  filter(timepoint %in% c(1,5)) %>%
+  select(months_symps, by_variable) %>%
+  tbl_summary(by = by_variable,
     statistic = everything() ~ "{mean} ({sd}); [{min}, {median}, {max}]"
   ) %>%
-  add_overall() #%>% 
-  # add_p(
-  #   everything() ~ "t.test",
-  #   test.args = all_tests("t.test") ~ list(var.equal = TRUE))
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 
 ## Do you now have a diagnosis from a health care provider of Long COVID?
 ```{r}
-t1 %>%
-  select(lcdiagnosis, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall() #%>% add_p()
+data %>%
+  filter(timepoint %in% c(1,5)) %>%
+  select(lcdiagnosis, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 ### If yes, how many months did it take for you to get that diagnosis after your symptoms started? (For example, 1 year would be 12 months; 2 years would be 24 months; 3 years would be 36 months)
 ```{r}
-t1 %>%
+data %>%
+  filter(timepoint %in% c(1,5)) %>%
   filter(lcdiagnosis == 1) %>%
   select(
-    site_name,
+    by_variable,
     ifyes_monthsymps) %>%
-  tbl_summary(by = site_name,
+  tbl_summary(by = by_variable,
     statistic = everything() ~ "{mean} ({sd}); [{min}, {median}, {max}]"
   ) %>%
-  add_overall() 
-  # %>% 
-  # add_p(
-  #   everything() ~ "t.test",
-  #   test.args = all_tests("t.test") ~ list(var.equal = TRUE)
-  # )
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 
 ## 	Which of the following conditions had you been diagnosed with prior to (before) developing Long COVID symptoms? (check all that apply)
 ```{r}
 # Order the condition from most frequent to least frequent
-ordered_conditions <- t1 %>% 
+ordered_conditions <- data %>% 
   select(conditions___1:conditions___14) %>%
   mutate(across(everything(), ~ as.numeric(.x))) %>%
   summarise_all(list(sum)) %>%
@@ -300,10 +463,10 @@ ordered_conditions <- t1 %>%
 ```
 
 ```{r}
-t1 %>%
-  # select(conditions___1:conditions___14) %>%
-  select(site_name, all_of(ordered_conditions)) %>%
-  tbl_summary(by = site_name,
+data %>%
+  filter(timepoint %in% c(1,5)) %>%
+  select(by_variable, all_of(ordered_conditions)) %>%
+  tbl_summary(by = by_variable,
     label = list(
       "conditions___1" ~ "Hypertension",
       "conditions___2" ~ "Obesity",
@@ -321,31 +484,33 @@ t1 %>%
       "conditions___14" ~ "None"),
     value = everything() ~ "1"
   ) %>%
-  add_overall() #%>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 
 ```{r}
 # All who selected "Other" did not provide free text so far
 # commented here 
-other_condition_n <- t1 %>%
-  filter(conditions___14 == 1) %>%
-  select(conditions_other) %>%
-  drop_na() %>%
-  nrow()
+# other_condition_n <- data %>%
+#   filter(conditions___14 == 1) %>%
+#   select(conditions_other) %>%
+#   drop_na() %>%
+#   nrow()
 
-if (other_condition_n >= 1) {
-  t1 %>%
-    filter(conditions___14 == 1) %>%
-    select(conditions_other) %>%
-    tbl_summary()
-}
+# *** Needs to be fixed
+# if (other_condition_n >= 1) {
+#   data %>%
+#     filter(conditions___14 == 1) %>%
+#     select(conditions_other) %>%
+#     tbl_summary()
+# }
 ```
 
 ## Have you received or increased your dose of any of the following medications specifically for Long COVID or Long COVID symptoms? (select all that apply)
 ```{r}
 # Order the medications from most frequent to least frequent
-ordered_medications <- t1 %>% 
+ordered_medications <- data %>% 
   select(medications___1:medications___13) %>%
   mutate(across(everything(), ~ as.numeric(.x))) %>%
   summarise_all(list(sum)) %>%
@@ -355,10 +520,10 @@ ordered_medications <- t1 %>%
 ``` 
 
 ```{r}
-t1 %>%
-  # select(medications___1:medications___13) %>%
-  select(site_name, all_of(ordered_medications)) %>%  
-  tbl_summary(by = site_name,
+data %>%
+  filter(timepoint %in% c(1,5)) %>%
+  select(by_variable, all_of(ordered_medications)) %>%  
+  tbl_summary(by = by_variable,
     label = list(
       "medications___1" ~ "Paxlovid",
       "medications___2" ~ "Low dose naltrexone",
@@ -375,20 +540,21 @@ t1 %>%
       "medications___13" ~ "None"),
     value = everything() ~ "1"
   ) %>%
-    add_overall() # %>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 <!-- ### Other medicine (please specify) -->
 ```{r}
 # All who selected "Other" 
-# other_medication_n <- t1 %>%
+# other_medication_n <- data %>%
 #   filter(medications___13 == 1) %>%
 #   select(other_med) %>%
 #   drop_na() %>%
 #   nrow()
 
 # if (other_medication_n >= 1) {
-#   t1 %>%
+#   data %>%
 #     filter(medications___13 == 1) %>%
 #     select(other_med) %>%
 #     tbl_summary()
@@ -397,10 +563,10 @@ t1 %>%
 
 ## Have you received any of the following therapies specifically for Long COVID or Long COVID symptoms? (select all that apply)
 ```{r}
-# t1 %<>%
+# data %<>%
 #   mutate(across(therapies___13:therapies___21, ~ factor(ifelse(.x == "Checked", 1, 0), levels = c(0, 1))))
 
-ordered_therapies <- t1 %>%
+ordered_therapies <- data %>%
   select(therapies___13:therapies___21) %>%
   mutate(across(everything(), ~ as.numeric(.x))) %>%
   summarise_all(list(sum)) %>%
@@ -410,10 +576,10 @@ ordered_therapies <- t1 %>%
 ``` 
 
 ```{r}
-t1 %>%
-  # select(therapies___13:therapies___21) %>%
-  select(site_name, all_of(ordered_therapies)) %>%
-  tbl_summary(by = site_name,
+data %>%
+  filter(timepoint %in% c(1,5)) %>%
+  select(by_variable, all_of(ordered_therapies)) %>%
+  tbl_summary(by = by_variable,
     label = list(
       "therapies___13" ~ "Speech therapy/cognitive training",
       "therapies___14" ~ "Physical therapy",
@@ -426,21 +592,21 @@ t1 %>%
       "therapies___21" ~ "None"),
     value = everything() ~ "1"
   ) %>%
-  add_overall() #%>% 
-  # add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 <!-- ## Other services (please specify) -->
 ```{r}
 # All who selected "Other" 
-# other_therapies_n <- t1 %>%
+# other_therapies_n <- data %>%
 #   filter(therapies___20 == 1) %>%
 #   select(other_med) %>%
 #   drop_na() %>%
 #   nrow()
 
 # if (other_therapies_n >= 1) {
-#   t1 %>%
+#   data %>%
 #     filter(therapies___20 == 1) %>%
 #     select(other_service) %>%
 #     tbl_summary()
@@ -451,24 +617,25 @@ t1 %>%
 ## Global physical and mental health subscores
 * PROMIS physical health and mental health subscores range from 4 (min) - 20 (max)
 ```{r}
-t1 %>%
-  select(site_name, promis_global_phys, promis_global_ment) %>%
-  tbl_summary(site_name,
+data %>%
+  select(by_variable, promis_global_phys, promis_global_ment) %>%
+  tbl_summary(by_variable,
     statistic = all_continuous() ~ "{mean} ({sd}); [{min}, {median}, {max}]",
     label = list(
       promis_global_phys ~ "Global physical health",
       promis_global_ment ~ "Global mental health"
     )
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Promis Global Health Physical and Mental Health T-Scores
 ```{r}
 # Display the tables of T-Score and their averages
-t1 %>%
-  select(site_name, promis_pht, promis_mht) %>%
-  tbl_summary(by = site_name,
+data %>%
+  select(by_variable, promis_pht, promis_mht) %>%
+  tbl_summary(by = by_variable,
     statistic = all_continuous() ~ "{mean} ({sd}); [{min}, {median}, {max}]",
     label = list(
       promis_pht ~ "Global physical health T-score",
@@ -477,127 +644,134 @@ t1 %>%
       # promis_global09r ~ "In general, please rate how well you carry out your usual social activities and roles."
     )
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## In general, would you say your health is:
 ```{r}
-t1 %>%
-  select(site_name, promis_global01) %>%
-  tbl_summary(by = site_name,
+data %>%
+  select(by_variable, promis_1) %>%
+  tbl_summary(by = by_variable,
     statistic = all_continuous() ~ "{mean} ({sd}); [{min}, {median}, {max}]",
     label = list(
     )
   ) %>%
-  add_overall() # %>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 
 ## In general, please rate how well you carry out your usual social activities and roles.
 ```{r}
-t1 %>%
-  select(promis_9, site_name) %>%
-  tbl_summary(by = site_name,
+data %>%
+  select(promis_9, by_variable) %>%
+  tbl_summary(by = by_variable,
     statistic = all_continuous() ~ "{mean} ({sd}); [{min}, {median}, {max}]",
     label = list(
     )
   ) %>%
-  add_overall() # %>% add_p()
+  add_overall() %>% 
+  add_report_statistic(cfg)
 ```
 
 
 # PASC
 ## Do you think you currently have symptoms or health problems resulting from your COVID infection?
 ```{r}
-t1 %>%
-  select(ps_ptpasc, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+data %>%
+  select(ps_ptpasc, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Symptoms
 * n.b. denominator is a subset to those that answered "Yes" to the question "Do you think you currently have symptoms or health problems resulting from your COVID infection?"
 * n.b. denominator for ps_menstrual and ps_menopause is a subset to the above and a response of "Female", "Transgender Male", "Non-binary", "Other, please describe", or "Prefer not to answer" to the question What is your gender identity?
+```{r}
+# Figure generating function in prep_redcap_data.R script
+```
 
 ### Overall
-```{r}
-# This chunk begins the section for generating the multi-colored figure in the
-# report.
-core_symptoms <- t1 %>%
-  select(ps_fatigue:ps_sex) %>%
-  names()
-
-# Another option is to display as a chart with binary responses
-pasc_hist <- t1 %>%
-  filter(ps_ptpasc == "Yes") %>%
-  select(all_of(core_symptoms)) %>%
-  mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes"), 1, 0))) %>%
-  pivot_longer(cols = everything(), names_to = "symptom", values_to = "yes") %>%
-  group_by(symptom) %>%
-  summarise(total_endorsed = sum(yes)) %>%
-  mutate(symptom = factor(symptom, levels = core_symptoms))
- 
-# Get a denominator all patients
-denominator_all <- t1 %>%
-  filter(ps_ptpasc == "Yes") %>%
-  nrow()
-
-# Get a denominator for ps_menstrual:ps_menopause which is a subset of those
-# that are not Male or Transgender Female
-denominator_subset <- t1 %>%
-  filter(ps_ptpasc == "Yes") %>%
-  filter(!patient_gender %in% c("Male", "Transgender Female")) %>%
-  select(patient_gender, ps_menstrual:ps_menopause) %>%
-  nrow()
-
-pasc_hist %<>%
-  mutate(percent = str_c("(",
-    round(
-      ifelse(symptom %in% c("ps_menstrual", "ps_menopause"), total_endorsed / denominator_subset, total_endorsed / denominator_all),
-      2) * 100, "%)")) %>%
-  mutate(n_per = str_c(total_endorsed, " ", percent))
-
-ordered_symptoms <- pasc_hist %>%
-  arrange(total_endorsed) %>%
-  pull(symptom)
-```
-
 ```{r, fig.height = 6.5, fig.width=6.5, fig.dpi = 600}
-pasc_hist %>%
-  mutate(symptom = factor(symptom, levels = ordered_symptoms)) %>%
-  ggplot(aes(x = symptom, y = total_endorsed, fill = symptom)) +
-  geom_col() +
-  geom_text(
-    aes(label = n_per), 
-          hjust = -0.25,
-          size = 3) +  
-  theme_minimal() +
-  lims(y = c(0, 60)) +
-  coord_flip() +
-  theme(legend.position = "none") +
-  labs(x = "Symptom", y = "Number endorsed (percent)")
+# overall 
+data %>%
+  filter(ps_ptpasc == "Yes") %>%
+  make_pasc_bar_chart()
 ```
 
+<!-- Conditional logic to display a header for PCC symptoms -->
+`r if(params$by_variable == "by_site_type"){'### PCC'}`
+```{r}
+# Conditional logic to govern the code chunk for displaying figure
+if(params$by_variable == "by_site_type") {
+  show_fig <- TRUE
+} else {
+  show_fig <- FALSE
+}
+```
+
+```{r, eval=show_fig, fig.height = 6.5, fig.width=6.5, fig.dpi = 600}
+# pcc 
+data %>%
+  filter(ps_ptpasc == "Yes", site_type == "PCC" ) %>%
+  make_pasc_bar_chart()
+```
+
+<!-- Conditional logic to display a header for MDC symptoms -->
+`r if(params$by_variable == "by_site_type"){'### MDC'}`
+```{r, eval=show_fig, fig.height = 6.5, fig.width=6.5, fig.dpi = 600}
+# pcc 
+data %>%
+  filter(ps_ptpasc == "Yes", site_type == "MDC" ) %>%
+  make_pasc_bar_chart()
+```
+
+
+## Average symptom burden, severity, and frequency
+* Symptoms ordered by frequency as in the previous chart
+* All burden, severity, and frequency questions are branched and presented only if patient responded endorsed experiencing the given symptom.
+* "ps_sense", "ps_headache", "ps_itching", "ps_bald", "ps_menstrual", "ps_menopause", "ps_fertility" "ps_sex" not assessed for frequency or severity.
+```{r}
+# Loads pasc severity data and loads functions for displaying the tiles
+source("d:/long_covid/scripts/functions/prep_severity_data.R")
+```
 
 ```{r}
-# These are the 12 symptoms used to calculate a PASC score
-pasc_symptoms <- c(
-"ps_sense",
-"ps_malaise",
-"ps_cough",
-"ps_think",
-"ps_thirst",
-"ps_heart",
-"ps_pain",
-"ps_fatigue",
-"ps_sex",
-"ps_faint",
-"ps_gastro",
-"ps_nerve")
-
-# These are the weights to multiply each binary symptom value
-pasc_symptom_scores <- c(8, 7, 4, 3, 3, 2, 2, 1, 1, 1, 1, 1)
+# Filter severity data to the subjects of interest
+pasc_severity_data <- pasc_severity_data %>%
+  filter(record_id %in% data$record_id, redcap_event_name == "consent_and_t1_sur_arm_1")
 ```
+
+```{r}
+# Join the site_type variable for filtering
+pasc_severity_data <- pasc_severity_data %>%
+  left_join(
+    data %>% select(record_id, site_type),
+    by = "record_id")
+```
+
+### Overall
+```{r, eval=show_fig, fig.height = 8, fig.width=6.5, fig.dpi = 600}
+pasc_severity_data %>%
+  make_pasc_tile_plot(., "ps")
+```
+
+`r if(params$by_variable == "by_site_type"){'### MDC'}`
+```{r, eval=show_fig, fig.height = 8, fig.width=6.5, fig.dpi = 600}
+pasc_severity_data %>%
+  filter(site_type == "MDC") %>%
+  make_pasc_tile_plot(., "ps")
+```
+
+`r if(params$by_variable == "by_site_type"){'### PCC'}`
+```{r, eval=show_fig, fig.height = 8, fig.width=6.5, fig.dpi = 600}
+pasc_severity_data %>%
+  filter(site_type == "PCC") %>%
+  make_pasc_tile_plot(., "ps")
+```
+
 
 ## PASC Scores
 ```{r}
@@ -606,24 +780,26 @@ pasc_symptom_scores <- c(8, 7, 4, 3, 3, 2, 2, 1, 1, 1, 1, 1)
 # had the pasc administered. Merging into the filtered t1 data frame was 
 # performed in case study team wants to see the scores broken out by clinic
 # gender, age, or some other variable.
-t1 %>%
+data %>%
   filter(ps_ptpasc == "Yes") %>%
-  select(site_name, pasc_score, pasc_positive) %>%
-  tbl_summary(by = site_name,
+  select(by_variable, pasc_score, pasc_positive) %>%
+  tbl_summary(by = by_variable,
     statistic = list(pasc_score ~ "{mean} ({sd}); [{min}, {median}, {max}]"),
     value = list(pasc_positive ~ "1")
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 
 # Experiences of Stigma
 ## Have you had one or more appointments with medical providers at a primary care clinic in the past three months?
 ```{r}
-t1 %>%
-  select(pcc_appts, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+data %>%
+  select(pcc_appts, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 
@@ -632,7 +808,7 @@ t1 %>%
 * Scale ranges from 1(min) to 5(max), with 1 indicating the lowest perceived understanding from medical providers and 5 indicated the highest perceived understanding.
 
 ```{r}
-t1 %>%
+data %>%
   filter(pcc_appts == "Yes") %>%
   select(lou_score_pcc) %>%
   tbl_summary(
@@ -646,37 +822,41 @@ t1 %>%
 ## Individual questions: How often in the past 3 months did medical professionals at your primary care clinic react to you in the following ways:
 ### Medical professionals took me seriously.
 ```{r}
-t1 %>%
+data %>%
   filter(pcc_appts == "Yes") %>%
-  select(serious_pcc, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+  select(serious_pcc, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ### Medical professionals understood the consequences of my health problems or illness.
 ```{r}
-t1 %>%
+data %>%
   filter(pcc_appts == "Yes") %>%
-  select(consequences_pcc, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+  select(consequences_pcc, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ### Medical professionals gave me the chance to talk about what is on my mind.
 ```{r}
-t1 %>%
+data %>%
   filter(pcc_appts == "Yes") %>%
-  select(talk_pcc, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+  select(talk_pcc, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Have you had one or more appointments with medical providers at a multi-disciplinary Long COVID clinic in the past three months?
 ```{r}
-t1 %>%
-  select(mdc_appts, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+data %>%
+  select(mdc_appts, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Mean score of “lack of understanding” scale from Illness Invalidation Inventory for experiences with MDC appointments
@@ -684,7 +864,7 @@ t1 %>%
 •	Scale ranges from 1(min) to 5(max), with 1 indicating the lowest perceived understanding from medical providers and 5 indicated the highest perceived understanding.
 
 ```{r}
-t1 %>%
+data %>%
   filter(mdc_appts == "Yes") %>%
   select(lou_score_mdc) %>%
   tbl_summary(
@@ -696,29 +876,32 @@ t1 %>%
 <!-- INDIVIDUAL SCORES -->
 ## Individual questions: How often in the past 3 months did medical professionals at your multi-disciplinary Long COVID clinic react to you in the following ways:
 ```{r}
-t1 %>%
+data %>%
   filter(mdc_appts == "Yes") %>%
-  select(serious_mdc, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+  select(serious_mdc, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ### Medical professionals understood the consequences of my health problems or illness.
 ```{r}
-t1 %>%
+data %>%
   filter(mdc_appts == "Yes") %>%
-  select(consequences_mdc, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+  select(consequences_mdc, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ### Medical professionals gave me the chance to talk about what is on my mind.
 ```{r}
-t1 %>%
+data %>%
   filter(mdc_appts == "Yes") %>%
-  select(talk_mdc, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+  select(talk_mdc, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 
@@ -726,18 +909,19 @@ t1 %>%
 ## Living Situation
 ### What is your living situation today?
 ```{r}
-t1 %>%
-  select(living_sit, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+data %>%
+  select(living_sit, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ### Think about the place you live. Do you have problems with any of the following?
 ```{r}
-t1 %>%
-  select(living_probs___1:living_probs___8, site_name) %>%
+data %>%
+  select(living_probs___1:living_probs___8, by_variable) %>%
   tbl_summary(
-    by = site_name,
+    by = by_variable,
     value = everything() ~ "1",
     label = list(
       living_probs___1 ~ "Pests such as bugs, ants, or mice",
@@ -750,86 +934,94 @@ t1 %>%
       living_probs___8 ~ "None of the above"
     )
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Food
 ### Within the past 12 months, were you worried that your food would run out before you got money to buy more?
 ```{r}
-t1 %>%
-  select(food_worry, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+data %>%
+  select(food_worry, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ### Within the past 12 months, has the food you bought just didn't last and you didn't have money to get more?
 ```{r}
-t1 %>%
-  select(food_last, site_name) %>%
-  tbl_summary(by = site_name) %>%
-  add_overall()
+data %>%
+  select(food_last, by_variable) %>%
+  tbl_summary(by = by_variable) %>%
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Transportation
 ### In the past 12 months, has lack of reliable transportation kept you from medical appointments, meetings, work or from getting things needed for daily living?
 ```{r}
-t1 %>%
-  select(transport, site_name) %>%
+data %>%
+  select(transport, by_variable) %>%
   tbl_summary( 
-    by = site_name,
+    by = by_variable,
     type = list(transport ~ "categorical")
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Utilities
 ### In the past 12 months has the electric, gas, oil, or water company threatened to shut off services in your home?
 ```{r}
-t1 %>%
-  select(utlities, site_name) %>%
+data %>%
+  select(utlities, by_variable) %>%
   tbl_summary(
-    by = site_name,
+    by = by_variable,
     type = list(utlities ~ "categorical")
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Financial Strain
 ### How hard is it for you to pay for the very basics like food, housing, medical care, and heating? Would you say it is:
 ```{r}
-t1 %>%
-  select(fin_strain, site_name) %>%
+data %>%
+  select(fin_strain, by_variable) %>%
   tbl_summary( 
-    by = site_name,
+    by = by_variable,
     type = list(fin_strain ~ "categorical")
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Family & Community Support
 ### If for any reason you need help with day-to-day activities such as bathing, preparing meals, shopping, managing finances, etc., do you get the help you need?
 ```{r}
-t1 %>%
-  select(help_daytoday, site_name) %>%
-  tbl_summary( by = site_name,
+data %>%
+  select(help_daytoday, by_variable) %>%
+  tbl_summary( by = by_variable,
     type = list(help_daytoday ~ "categorical")
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ### How often do you feel lonely or isolated from those around you?
 ```{r}
-t1 %>%
-  select(lonely, site_name) %>%
-  tbl_summary( by = site_name,
+data %>%
+  select(lonely, by_variable) %>%
+  tbl_summary( by = by_variable,
     type = list(lonely ~ "categorical")
   ) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```
 
 ## Summary of needs by domain
 ```{r}
-t1 %>%
+data %>%
   select(
     living_need,
     food_need,
@@ -838,9 +1030,9 @@ t1 %>%
     fin_strain_need,
     social_need,
     hrsn_need_score,
-    site_name) %>%
+    by_variable) %>%
   tbl_summary(
-    by = site_name,
+    by = by_variable,
     value = everything() ~ "1",
     missing = "no",
     type = list(hrsn_need_score ~ "continuous"),
@@ -848,5 +1040,6 @@ t1 %>%
     label = list(
       transport_need ~ "transportation_need", 
       utlities_need ~ "utilities_need")) %>%
-  add_overall()
+  add_overall() %>%
+  add_report_statistic(cfg)
 ```

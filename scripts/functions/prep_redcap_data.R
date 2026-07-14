@@ -1,22 +1,48 @@
 # /////////////////////////////////////////////////////////////////////////////
 # Carlos Rodriguez Ph.D. CU Anschutz Dept. of Family Medicine
+
 # Description: This script will download and process AHRQ Long COVID RedCap
 # Project ID 25710 Data. This script is designed to be a centralized data
-# processing script that can be used in several reports such as patient 
-# accrual, patient survey, patient data collection tables, and others.
+# processing script that can be used in several reports such as the patient
+# accrual report, patient survey report, and patient data collection tables
+# (for RPPR).
 
 # Status: Work in progress
-# Last updated: 05/30/2026
+# Last updated: 07/14/2026
+
 # /////////////////////////////////////////////////////////////////////////////
+
+# library(magrittr, include = "%<>%")
+# library(dfmtbx)
+# library(tidyverse)
+# library(gtsummary)
 
 # Pull report 176060 as labeled data
 # Corresponds to patient_enrollment report in REDCap
-data <- pull_redcap_report(Sys.getenv("LC_patient"), "176060", "label", "raw", "true")
+data <- pull_redcap_report(
+  Sys.getenv("LC_patient"), 
+  "176060", 
+  "label", 
+  "raw", 
+  "true")
+
+# T1 Columns with other text
+# These all have at least one response with text, and all show up
+# data$other_service
+# data$conditions_other
+# data$other_med
+
+# T5 Columns that won't download. Columns will not export to .xlsx either
+# May possibly be due no one having data in there at this point
+# data$conditions_other_t5
+# data$other_med_t5
+# data$other_service_t5
 
 # Capture the column names
 names_data <- names(data)
 
-# Drop the demographic select all that apply questions
+# Drop the demographic select all that apply questions from data so that
+# modified columns can be merged in a subsequent step.
 data %<>%
   select(
     -starts_with("patient_race"),
@@ -63,6 +89,17 @@ data %<>%
     .default = NA)
   ) 
 
+
+# Check columns
+# View(
+#   data %>%
+#     select(redcap_event_name, record_id, name, anythingelse, study_label, not_enrolled_status) %>%
+#     group_by(record_id) %>%
+#     fill(everything(), .direction = "updown") %>%
+#     ungroup()
+# )
+
+
 # Identify test records as those with the "test" in the name field OR those
 # with "test record" in the anything else field
 # ids 14, 15, 16, and 18 flagged as test Ids. (CR 12/09/2025)
@@ -72,9 +109,12 @@ test_ids <-
     filter(
       grepl("test", name, ignore.case = TRUE) | 
       grepl("test record", anythingelse, ignore.case = TRUE) |
-      grepl("test", study_label, ignore.case = TRUE)
+      grepl("test", study_label, ignore.case = TRUE) |
+      grepl("test", not_enrolled_status, ignore.case = TRUE)
       ) %>%
+    distinct(record_id) %>%  
     pull(record_id)
+    
 
 
 # Identify duplicated record_ids as those with "Duplicated record" in the 
@@ -85,16 +125,88 @@ duplicated_ids <-
   data %>%
     filter(
       grepl("duplicate", enrollstatus, ignore.case = TRUE) |
-      grepl("duplicate", study_label, ignore.case = TRUE)
+      grepl("duplicate", study_label, ignore.case = TRUE) |
+      grepl("duplicate", not_enrolled_status, ignore.case = TRUE)
       ) %>%
+    distinct(record_id) %>%  
     pull(record_id)
 
 # Remove the test and duplicated ids
 data %<>%
   filter(!record_id %in% c(test_ids, duplicated_ids))
 
+# Create an updated enroll status column, this coalesces the not_enrolled_status
+# and then enrollstatus column, which updates the status to the current status
+data %<>%
+  mutate(current_enroll_status = coalesce(not_enrolled_status, enrollstatus))
 
-# Capture those that completed the enrollment step
+# Check that all current_enroll_status == Enrollment completed also have a time
+# stamp for T1 PASC
+all_t1_complete <- data %>%
+  filter(
+    record_id %in% (data %>% filter(current_enroll_status == "Enrollment completed") %>% pull(record_id)),
+    timepoint == 1) %>% 
+  pull(pasc_symptoms_and_followup_questions_complete) %>%
+  table() %>%
+  names()
+
+if (all_t1_complete != "Complete"){
+  stop("Check completed status of enrolled and T1 PASC.")
+}
+
+
+# Come up with a way to determine where the drop out occured, T1, T2, etc.
+data %>%
+  pull(current_enroll_status) %>% table() %>% names()
+
+# Modify the responses in current_enroll_status for 
+data %<>% 
+  mutate(current_enroll_status = gsub("\\(.*", "", current_enroll_status)) %>%
+  mutate(current_enroll_status = trimws(current_enroll_status)) 
+
+# Create a dataframe showing the last completed survey for those that left the
+# study.
+ltfu_df <- data %>%
+  filter(record_id %in% (data %>% filter(current_enroll_status == "left study") %>% pull(record_id))) %>%
+  filter(timepoint %in% c(1, 2, 3, 4, 5)) %>%
+  select(record_id, redcap_event_name, 
+    pasc_symptoms_and_followup_questions_complete,
+    pasc_symptoms_only_t2_t4_complete,
+    pasc_symptoms_and_followup_questions_t5_complete) %>%
+  mutate(pasc_status = coalesce(
+    pasc_symptoms_and_followup_questions_complete,
+    pasc_symptoms_only_t2_t4_complete,
+    pasc_symptoms_and_followup_questions_t5_complete)) %>%
+  filter(pasc_status == "Complete") %>%
+  tail(n = 1) %>%
+  select(record_id, redcap_event_name) %>%
+  rename(ltfu_surv = redcap_event_name)
+
+
+# merge any data from the lost to follow up df
+data %<>%
+  mutate(ltfu = ifelse(record_id %in% ltfu_df$record_id, 1, 0)) %>%
+  left_join(ltfu_df, by = "record_id")
+
+rm(ltfu_df)
+
+# Switch those that were designated as left study to enroll status, since 
+# their data can still be used for analysis.
+data %<>%
+  mutate(current_enroll_status = ifelse(grepl("left study", current_enroll_status), "Enrollment completed", current_enroll_status)) %>%
+  mutate(enrollstatus = coalesce(current_enroll_status, enrollstatus))
+
+
+# Clean up the modified enrollstatus column
+data %<>%
+  mutate(
+    enrollstatus = ifelse(grepl("never", enrollstatus), "No response", enrollstatus),
+    enrollstatus = ifelse(grepl("declined", enrollstatus), "Declined", enrollstatus),
+    enrollstatus = ifelse(grepl("partial", enrollstatus), "Partial", enrollstatus),
+    enrollstatus = ifelse(grepl("eligible", enrollstatus), "Not eligible", enrollstatus),
+  )
+
+# Capture those that completed the enrollment step and completed a T1 PASC
 enrollment_completed_ids <- data %>%
   filter(enrollstatus == "Enrollment completed") %>%
   pull(record_id)
@@ -104,16 +216,18 @@ ltfu_ids <- data %>%
   filter(grepl("ltfu", study_label, ignore.case = TRUE)) %>%
   pull(record_id)
 
-data %<>%
-  mutate(enrollstatus = ifelse(record_id %in% ltfu_ids, "LTFU", enrollstatus))
+# This should not longer be needed as there is a dedicated lost to follow up  
+# data %<>%
+#   mutate(enrollstatus = ifelse(record_id %in% ltfu_ids, "LTFU", enrollstatus))
 
 # Ids that declined
 declined_ids <- data %>%
   filter(grepl("declined", study_label, ignore.case = TRUE)) %>%
   pull(record_id)
 
-data %<>%
-  mutate(enrollstatus = ifelse(record_id %in% declined_ids, "Declined", enrollstatus))
+# This should not longer be needed as Declined is now a value in enrollstatus 
+# data %<>%
+#   mutate(enrollstatus = ifelse(record_id %in% declined_ids, "Declined", enrollstatus))
 
 
 # /////////////////////////////// Data Clean Up ///////////////////////////////
@@ -135,9 +249,9 @@ data %<>%
   mutate(site_type = ifelse(is.na(site_type), "Unknown", site_type)) %>%
   mutate(site_name = ifelse(is.na(site_name), "Unknown", site_name))
 
-# Patient demographics
+# Patient demographics --------------------------------------------------------
 
-## Age group
+# Age group
 data %<>%
   mutate(age_group = case_when(
                                patient_age >= 18 & patient_age < 35 ~ "18-34",
@@ -178,6 +292,7 @@ data %<>%
  
 
 ## Education level
+
 ## Marital status
 
 ## Employment status pre-covid
@@ -186,9 +301,44 @@ data %<>%
 
 ## Current employment status
 data %<>% 
-  mutate(across(patient_employ_2___1:patient_employ_2___7, ~ factor(.x, levels = c(0,1)))) 
+  mutate(across(patient_employ_2___1:patient_employ_2___7, ~ factor(.x, levels = c(0,1))))
   
 # Patient clinical questions --------------------------------------------------
+# Asked at T1 and T5 only
+# months_symps
+
+# pcq_t1 set to not select other_service, for name hormonization
+pcq_t1 <- data %>%
+  filter(timepoint == 1) %>%
+  select(record_id, timepoint, months_symps:therapies___21) %>%
+  select(-conditions_other, -other_med)
+
+# n.b. does not download the other column of conditions, medications, or 
+# service for some reason.
+pcq_t5 <- data %>%
+  filter(timepoint == 5) %>%
+  select(record_id, timepoint, months_symps_t5:therapies_t5___21)
+
+# Remove the columns that were just copied to re-introduce after data 
+# harmonization
+data %<>%
+  select(
+    -(all_of(names(pcq_t1)[3:41]))) %>%
+  select(
+    -(all_of(names(pcq_t5)[3:41])))
+
+# Set the names of the pcq_t1 columns to rename the columns in pcq_t5
+pcq_names  <- names(pcq_t1)
+names(pcq_t5) <- pcq_names
+
+# Reintroduce the pcq items
+data %<>%
+  left_join(
+    bind_rows(pcq_t1, pcq_t5),
+    by = c("record_id", "timepoint")
+  )
+
+rm(pcq_t1,  pcq_t5)
 
 ## Current Diagnosis
 data %<>%
@@ -221,20 +371,20 @@ data %<>%
 # data %>%
 #   select(promis_global01_v2:avg_pain_v2)
 
-# Since the instruments only vary by the header, the columns can be colaesced
-# and renamed
+# There are separate instruments for T1, T2-T4, and T5, instead of using the
+# same instrument but at different time points.
 data %<>%
   mutate(
-    promis_1 = coalesce(promis_global01, promis_global01_v2),
-    promis_2 = coalesce(promis_global02, promis_global01_v2),
-    promis_3 = coalesce(promis_global03, promis_global03_v2),
-    promis_4 = coalesce(promis_global04, promis_global04_v2),
-    promis_5 = coalesce(promis_global05, promis_global05_v2),
-    promis_6 = coalesce(promis_global07, promis_global07_v2),
-    promis_7 = coalesce(avg_pain, avg_pain_v2),
-    promis_8 = coalesce(avg_fatigue, avg_fatigue_v2),
-    promis_9 = coalesce(promis_global06, promis_global06_v2),
-    promis_10 = coalesce(bothered, bothered_v2)
+    promis_1 = coalesce(promis_global01, promis_global01_v2, promis_global01_t5),
+    promis_2 = coalesce(promis_global02, promis_global02_v2, promis_global02_t5),
+    promis_3 = coalesce(promis_global03, promis_global03_v2, promis_global03_t5),
+    promis_4 = coalesce(promis_global04, promis_global04_v2, promis_global04_t5),
+    promis_5 = coalesce(promis_global05, promis_global05_v2, promis_global05_t5),
+    promis_6 = coalesce(promis_global07, promis_global07_v2, promis_global07_t5),
+    promis_7 = coalesce(avg_pain, avg_pain_v2, avg_pain_t5),
+    promis_8 = coalesce(avg_fatigue, avg_fatigue_v2, avg_fatigue_t5),
+    promis_9 = coalesce(promis_global06, promis_global06_v2, promis_global06_t5),
+    promis_10 = coalesce(bothered, bothered_v2, bothered_t5)
   ) %>%
   mutate(across(promis_2:promis_6, ~ as.numeric(substr(.x, 1, 1)))) %>%
   mutate(promis_7 = case_match(
@@ -267,6 +417,13 @@ data %<>%
   mutate(promis_global_phys = rowSums(across(c(promis_7, promis_6, promis_3, promis_8)))) %>%
   mutate(promis_global_ment = rowSums(across(c(promis_2, promis_4, promis_5, promis_10))))
 
+# Remove the columns that are no longer needed
+data %<>%
+  select(-(starts_with("promis_global0"))) %>%
+  select(-(starts_with("avg_pain"))) %>%
+  select(-(starts_with("bothered"))) %>%
+  select(-(starts_with("avg_fatigue")))
+
 # Load the t-score tables
 promis_global_pht <- read_csv("D:\\long_covid\\patient_survey\\scoring_guides\\promis_phys_t-score_table.csv",
   show_col_types = FALSE)
@@ -293,7 +450,9 @@ data %<>%
 
 # PASC ------------------------------------------------------------------------
 # t1 and t5 get ps_pasc with symptom severity
-# t2 - t4 only get ps2_pasc with out symptom severity
+# The responses change from T1 to T5 for the symptom questions. The responses
+# in T5 resemble those in T2:T4
+# T2:T4 only get ps2_pasc with out symptom severity
 # ps2_pasc subsets to those who answer yes or I don't know
 
 # These are the 12 symptoms used to calculate a PASC score
@@ -302,18 +461,18 @@ data %<>%
 # and in the past 30 days, whereas ps1 is currently.
 data %<>%
   mutate(
-    ps_sense = coalesce(ps_sense, ps2_sense),
-    ps_malaise = coalesce(ps_malaise, ps2_malaise),
-    ps_cough = coalesce(ps_cough, ps2_cough),
-    ps_think = coalesce(ps_think, ps2_think ),
-    ps_thirst = coalesce(ps_thirst, ps2_thirst),
-    ps_heart = coalesce(ps_heart, ps2_heart),
-    ps_pain = coalesce(ps_pain, ps2_pain),
-    ps_fatigue = coalesce(ps_fatigue , ps2_fatigue),
-    ps_sex = coalesce(ps_sex , ps2_sex),
-    ps_faint = coalesce(ps_faint , ps2_faint),
-    ps_gastro = coalesce(ps_gastro, ps2_gastro),
-    ps_nerve = coalesce(ps_nerve , ps2_nerve),
+    ps_sense = coalesce(ps_sense, ps2_sense, ps_sense_t5 ),
+    ps_malaise = coalesce(ps_malaise, ps2_malaise, ps_malaise_t5),
+    ps_cough = coalesce(ps_cough, ps2_cough, ps_cough_t5),
+    ps_think = coalesce(ps_think, ps2_think, ps_think_t5 ),
+    ps_thirst = coalesce(ps_thirst, ps2_thirst, ps_thirst_t5),
+    ps_heart = coalesce(ps_heart, ps2_heart, ps_heart_t5),
+    ps_pain = coalesce(ps_pain, ps2_pain, ps_pain_t5),
+    ps_fatigue = coalesce(ps_fatigue , ps2_fatigue, ps_fatigue_t5),
+    ps_sex = coalesce(ps_sex, ps2_sex, ps_sex_t5),
+    ps_faint = coalesce(ps_faint, ps2_faint, ps_faint_t5),
+    ps_gastro = coalesce(ps_gastro, ps2_gastro, ps_gastro_t5),
+    ps_nerve = coalesce(ps_nerve, ps2_nerve, ps_nerve_t5),
   )
 
 
@@ -331,20 +490,20 @@ pasc_symptoms <- c(
 "ps_gastro",
 "ps_nerve")
 
-# *** Could drop ps2 symptoms here
-
 # These are the weights to multiply each binary symptom value
 pasc_symptom_scores <- c(8, 7, 4, 3, 3, 2, 2, 1, 1, 1, 1, 1)
 
 # Create a separate data frame subset to those that received the branching 
-# question.
+# questions.
 pasc_data <- data %>%
   filter(
     ps_ptpasc == "Yes" |
-    ps2_ptpasc %in% c("Yes", "I don't know of prefer not to answer")) %>%
+    ps2_ptpasc %in% c("Yes", "I don't know of prefer not to answer") |
+    ps_ptpasc_t5 == "Yes") %>%
   select(record_id, redcap_event_name, all_of(pasc_symptoms))
 
-# Score the pasc at t1 and t5
+# Score the pasc at t1 and t5. For T5, does not discriminate for whether the 
+# symptom was experienced in the last 30 days or last 3 months
 ps1 <- bind_cols(  
   pasc_data %>%
   filter(
@@ -360,45 +519,44 @@ ps1 <- bind_cols(
   mutate(pasc_score = rowSums(across(everything()))) %>%
   mutate(pasc_positive = ifelse(pasc_score >= 12, 1, 0)) %>%
   select(pasc_score, pasc_positive)
-) 
+)
 
-# Score the pasc at t2 - t4
+# Score the pasc at t2 - t4 ----
 # Symptoms in the past 3mo but not past 30 days
-ps2_3mo <- bind_cols(
-  pasc_data %>%
-  filter(
-    !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
-  select(record_id, redcap_event_name),
+# ps2_3mo <- bind_cols(
+#   pasc_data %>%
+#   filter(
+#     !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
+#   select(record_id, redcap_event_name),
     
-  pasc_data %>%
-  filter(
-    !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
-  select(all_of(pasc_symptoms)) %>%
-  mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes, but not in the last 30 days"), 1, 0))) %>%
-  sweep(., 2, pasc_symptom_scores, `*`) %>% 
-  mutate(pasc_score_3mo = rowSums(across(everything()))) %>%
-  mutate(pasc_positive_3mo = ifelse(pasc_score_3mo >= 12, 1, 0)) %>%
-  select(pasc_score_3mo, pasc_positive_3mo)
-)
+#   pasc_data %>%
+#   filter(
+#     !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
+#   select(all_of(pasc_symptoms)) %>%
+#   mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes, but not in the last 30 days"), 1, 0))) %>%
+#   sweep(., 2, pasc_symptom_scores, `*`) %>% 
+#   mutate(pasc_score_3mo = rowSums(across(everything()))) %>%
+#   mutate(pasc_positive_3mo = ifelse(pasc_score_3mo >= 12, 1, 0)) %>%
+#   select(pasc_score_3mo, pasc_positive_3mo)
+# )
 
-# Symptoms in the past 30 days
-ps2_30d <- bind_cols(
-  pasc_data %>%
-  filter(
-    !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
-  select(record_id, redcap_event_name),
+# # Symptoms in the past 30 days
+# ps2_30d <- bind_cols(
+#   pasc_data %>%
+#   filter(
+#     !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
+#   select(record_id, redcap_event_name),
     
-  pasc_data %>%
-  filter(
-    !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
-  select(all_of(pasc_symptoms)) %>%
-  mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes, and I STILL HAVE it (in the last 30 days)"), 1, 0))) %>%
-  sweep(., 2, pasc_symptom_scores, `*`) %>% 
-  mutate(pasc_score_30d = rowSums(across(everything()))) %>%
-  mutate(pasc_positive_30d = ifelse(pasc_score_30d >= 12, 1, 0)) %>%
-  select(pasc_score_30d, pasc_positive_30d)
-)
-
+#   pasc_data %>%
+#   filter(
+#     !redcap_event_name %in% c("consent_and_t1_sur_arm_1", "t5_survey_arm_1")) %>%
+#   select(all_of(pasc_symptoms)) %>%
+#   mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes, and I STILL HAVE it (in the last 30 days)"), 1, 0))) %>%
+#   sweep(., 2, pasc_symptom_scores, `*`) %>% 
+#   mutate(pasc_score_30d = rowSums(across(everything()))) %>%
+#   mutate(pasc_positive_30d = ifelse(pasc_score_30d >= 12, 1, 0)) %>%
+#   select(pasc_score_30d, pasc_positive_30d)
+# )
 
 # Symptoms within the past 3 months or 30 days
 ps2 <- bind_cols(
@@ -418,12 +576,7 @@ ps2 <- bind_cols(
   select(pasc_score, pasc_positive)
 )
 
-
-
-
 # Merge scores back into main data frame
-# commented out because no scoring 3mo and 30d separately was not the intended approach
-
 # data %>%
   # left_join(ps1, by = c("redcap_event_name", "record_id")) %>%
   # left_join(ps2_3mo, by = c("redcap_event_name", "record_id")) %>% 
@@ -435,6 +588,110 @@ data %<>%
     by = c("redcap_event_name", "record_id")
 )
 
+rm(ps1, ps2)
+
+# Remove the harmonized symptoms columns from the data set, but keep the 
+# branching  *_ptpasc and symptom severity questions
+data %<>%
+  select(-(ps_fatigue_t5:ps_other_t5))
+
+data %<>%
+  select(-(ps2_fatigue:ps2_other))
+
+
+# Harmonize the symptom severity items from t1 and t5-------------------------
+
+# Create separate data frames of the section of columns containing the symtpom
+# severity questions
+pasc_t1_severity <- data %>%
+  filter(timepoint == 1) %>%
+  select(record_id, timepoint, ps_fatigue_burden:ps_sex_burden)
+
+pasc_t5_severity <- data %>%
+  filter(timepoint == 5) %>%
+  select(record_id, timepoint, ps_fatigue_burden_t5:ps_sex_burden_t5)
+
+# Harmonize the t5 names to the t1 names
+names_pasc_t1_severity <- names(pasc_t1_severity)
+
+names(pasc_t5_severity) <- names_pasc_t1_severity
+
+# Drop columns before mergin
+data %<>%
+  select(-(ps_fatigue_burden:ps_sex_burden)) %>%
+  select(-(ps_fatigue_burden_t5:ps_sex_burden_t5))
+
+# stack after renaming
+pasc_severity <- bind_rows(pasc_t1_severity, pasc_t5_severity)
+
+# Merge the data 
+data %<>%
+  left_join(pasc_severity, by = c("record_id", "timepoint"))
+
+rm(pasc_t1_severity, pasc_t5_severity)
+
+
+# PASC Figure generating function ---------------------------------------------
+make_pasc_bar_chart <- function(df) {
+
+  # Set the core symptoms
+  core_symptoms <- df %>%
+  select(ps_fatigue:ps_sex) %>%
+  names()
+
+  # Prepare histogram df, where the frequency and percentage of each symptom
+  # is calculated
+  pasc_hist <- df %>%
+    select(all_of(core_symptoms)) %>%
+    mutate(across(everything(), ~ ifelse(str_detect(.x, "Yes"), 1, 0))) %>%
+    pivot_longer(cols = everything(), names_to = "symptom", values_to = "yes") %>%
+    group_by(symptom) %>%
+    summarise(total_endorsed = sum(yes)) %>%
+    mutate(symptom = factor(symptom, levels = core_symptoms))
+
+  # Get a denominator all patients
+  denominator_all <- df %>%
+    nrow()
+
+
+  # Get a denominator for ps_menstrual:ps_menopause which is a subset of those
+  # that are not Male or Transgender Female, because these are branched questions
+  # in the RedCap project.
+  denominator_subset <- df %>%
+    filter(!patient_gender %in% c("Male", "Transgender Female")) %>%
+    select(patient_gender, ps_menstrual:ps_menopause) %>%
+    nrow()
+
+  pasc_hist %<>%
+    mutate(percent = str_c("(",
+      round(
+        ifelse(symptom %in% c("ps_menstrual", "ps_menopause"), total_endorsed / denominator_subset, total_endorsed / denominator_all),
+        2) * 100, "%)")) %>%
+    mutate(n_per = str_c(total_endorsed, " ", percent))
+
+# Get an ordered vector of symptoms to organize the bar chart by 
+# frequency/percentage
+  ordered_symptoms <- pasc_hist %>%
+    arrange(total_endorsed) %>%
+    pull(symptom)
+
+# Calculate a percentage in parentheses, and then concatenate the frequency and
+# proportion into one value that will be used to generate labels for the bar
+# chart
+  pasc_hist %>%
+    mutate(symptom = factor(symptom, levels = ordered_symptoms)) %>%
+    ggplot(aes(x = symptom, y = total_endorsed, fill = symptom)) +
+    geom_col() +
+    geom_text(
+      aes(label = n_per), 
+            hjust = -0.25,
+            size = 3) +  
+    theme_minimal() +
+    lims(y = c(0, 75)) + # (0,35) works great for PCC and MDC, but not Overall)
+    coord_flip() +
+    theme(legend.position = "none") +
+    labs(x = "Symptom", y = "Number endorsed (percent)")
+}
 
 # Experiences of stigma -------------------------------------------------------
 # This instrument is the lack of understanding subscale from the illness
@@ -443,10 +700,29 @@ data %<>%
 # Only administered at t1 and t5 and is asked in reference to experienecs at
 # PCCs and MDCs if a patient reports a visit in those site types within the
 # past 3 months.
+
+# Harmonize the names
+# Place all values in one column for each item instead of 2
+data %<>%
+  mutate(
+    pcc_appts  = coalesce(pcc_appts, pcc_appts_t5 ),
+    serious_pcc  = coalesce(serious_pcc, serious_pcc_t5),
+    consequences_pcc  = coalesce(consequences_pcc, consequences_pcc_t5),
+    mdc_appts  = coalesce(mdc_appts, mdc_appts_t5 ),
+    serious_mdc  = coalesce(serious_mdc, serious_mdc_t5),
+    consequences_mdc  = coalesce(consequences_mdc, consequences_mdc_t5),
+    talk_mdc   = coalesce(talk_mdc, talk_mdc_t5),
+  )
+
+# Remove columns that are no longer needed
+data %<>%
+  select(-(pcc_appts_t5:talk_mdc_t5))
+
+# Convert NAs to Unknowns
 data %<>%
   mutate(across(c(pcc_appts, mdc_appts), ~ fct_na_value_to_level(factor(.x), level = "Unknown")))
 
-# Create a data frame for the PCC referenced questions
+# Calculate the LOU pcc scores
 lou_pcc <- data %>%
   filter(pcc_appts == "Yes") %>%
   select(record_id, timepoint, serious_pcc:talk_pcc) %>%
@@ -463,6 +739,7 @@ lou_pcc <- data %>%
   select(record_id, timepoint, lou_score) %>%
   rename(lou_score_pcc = lou_score)
 
+# Calculate the LOU mdc scores
 lou_mdc <- data %>%
   filter(mdc_appts == "Yes") %>%
   select(record_id, timepoint, serious_mdc:talk_mdc) %>%
@@ -479,12 +756,12 @@ lou_mdc <- data %>%
   select(record_id, timepoint, lou_score) %>%
   rename(lou_score_mdc = lou_score)
 
-
+# Merge score back to the main data set
 data %<>%
   left_join(lou_pcc, by = c("record_id", "timepoint")) %>%
   left_join(lou_mdc, by = c("record_id", "timepoint"))
   
-
+# Set the factor levels 
 data %<>%
   mutate(across(serious_pcc:talk_pcc, ~ factor(.x, levels = c( 
       "Never",
@@ -504,7 +781,10 @@ data %<>%
 # Bind data and convert to long format for modeling
 lou_data <- bind_rows(lou_mdc, lou_pcc)
 
-# could groub_by() and fill updown, then slice_head()
+# Remove un-necessary data frames
+rm(lou_mdc, lou_pcc)
+
+# could group_by() and fill updown, then slice_head()
 lou_data_long <- lou_data %>%
   group_by(record_id, timepoint) %>%
   pivot_longer(cols = lou_score_mdc:lou_score_pcc, values_to = "score", names_to = "type") %>%
@@ -512,10 +792,10 @@ lou_data_long <- lou_data %>%
   drop_na(score) %>%
   arrange(record_id)
 
-
-lou_pcc_data <- data %>%
+# Calculate means and SEs for the three individual LOU scale items
+lou_pcc_means <- data %>%
   filter(pcc_appts == "Yes") %>%
-  select(serious_pcc:talk_pcc) %>%
+  select(timepoint, serious_pcc:talk_pcc) %>%
   mutate(across(serious_pcc:talk_pcc, ~ case_match(.x, 
       "Never" ~ 1,
       "Rarely" ~ 2,
@@ -523,6 +803,7 @@ lou_pcc_data <- data %>%
       "Often" ~ 4,
       "Very Often" ~ 5,
       .default = NA))) %>%
+  group_by(timepoint) %>%
   summarise(
     mean_serious = mean(serious_pcc),
     se_serious = sd(serious_pcc) / sqrt(n()),
@@ -532,9 +813,9 @@ lou_pcc_data <- data %>%
     se_talk = sd(talk_pcc) / sqrt(n()),
   )
 
-lou_mdc_data <- data %>%
+lou_mdc_means <- data %>%
   filter(mdc_appts == "Yes") %>%
-  select(serious_mdc:talk_mdc) %>%
+  select(timepoint, serious_mdc:talk_mdc) %>%
   mutate(across(serious_mdc:talk_mdc, ~ case_match(.x, 
       "Never" ~ 1,
       "Rarely" ~ 2,
@@ -542,6 +823,7 @@ lou_mdc_data <- data %>%
       "Often" ~ 4,
       "Very Often" ~ 5,
       .default = NA))) %>%
+  group_by(timepoint) %>%
   summarise(
     mean_serious = mean(serious_mdc),
     se_serious = sd(serious_mdc) / sqrt(n()),
@@ -552,19 +834,109 @@ lou_mdc_data <- data %>%
   )
 
 
-# Get the differences between the two LOU referenced measures
-bind_rows(lou_mdc_data, lou_pcc_data) %>%
-  select(starts_with("mean")) %>%
-  summarise(
-    diff_serious = diff(mean_serious),
-    diff_consequences = diff(mean_consequences),
-    diff_talk = diff(mean_talk),
-    
-  )
+# Model the difference at time between PCC and MDC LOU scores
+model <- lmerTest::lmer(score ~ type + (1 | record_id), data = (lou_data_long %>% filter(timepoint == 1)))
+
+emms <- emmeans::emmeans(model, ~ type, lmer.df = "satterthwaite") %>% 
+  pairs() %>% 
+  as_tibble()
+
+# Calculate the diffs and the SEs at time point 1
+lou_item_level_long <- data %>%
+  filter(timepoint == 1) %>%
+  filter(mdc_appts == "Yes" | pcc_appts == "Yes") %>%
+  select(record_id, serious_mdc, consequences_mdc, talk_mdc, serious_pcc, consequences_pcc, talk_pcc) %>%
+  mutate(across(serious_mdc:talk_pcc, ~ case_match(.x, 
+    "Never" ~ 1,
+    "Rarely" ~ 2,
+    "Sometimes" ~ 3, 
+    "Often" ~ 4,
+    "Very Often" ~ 5,
+    .default = NA))) %>%
+  pivot_longer(cols = serious_mdc:talk_pcc, values_to = "value", names_to = "item") %>%
+  mutate(record_id = factor(record_id))
 
 
-# Health Related Social Needs (HRSN) from American Community Health Survey
-# Only administer at t1 and t5
+display_se <- function(df) {
+  model <- lmerTest::lmer(value ~ item + (1 | record_id), data = df)
+
+  emmeans::emmeans(model, ~ item, lmer.df = "satterthwaite") %>% 
+    pairs() %>% 
+    as_tibble()
+
+}
+
+# Get SEs for the differences between types -----------------------------------
+# This section is commented out to prevent output from showing up in the
+# patient accrual report, but it didn't do anything. And it still runs fine in
+# the master t1 template .qmd docs.
+# serious (produces is singular warning)
+# Likely due to a small number of participants with 2 items
+lou_item_level_long %>%
+  filter(item %in% c("serious_mdc", "serious_pcc")) %>%
+  display_se()
+
+# Test the serious item of the LOU scale
+# test_data <- lou_item_level_long %>% filter(item %in%  c("serious_mdc", "serious_pcc"))
+# test_model <- lmerTest::lmer(value ~ item + (1 | record_id), data = test_data)
+
+# consequences
+lou_item_level_long %>%
+  filter(item %in% c("consequences_mdc", "consequences_pcc")) %>%
+  display_se()
+
+# talk
+lou_item_level_long %>%
+  filter(item %in% c("talk_mdc", "talk_pcc")) %>%
+  display_se()
+# -----------------------------------------------------------------------------
+
+
+# Health Related Social Needs (HRSN) from American Community Health Survey ----
+# Only administered at t1 and t5
+
+# Contains 16 columns
+hrsn_t1 <- data %>%
+  filter(timepoint == 1) %>%
+  select(record_id, timepoint, living_sit:lonely)
+
+# Contains 21 columns, 
+hrsn_t5 <- data %>%
+  filter(timepoint == 5) %>%
+  select(record_id, timepoint, living_sit_t5:lonely_change_t5)
+
+change_t5_columns <- hrsn_t5 %>%
+  select(record_id, timepoint, ends_with("change_t5"))
+
+hrsn_t5 %<>%
+  select(-ends_with("change_t5"))
+
+
+# Drop the columns
+
+# Drop the HRSN columns, since they will be merged back in
+# 16 variables
+data %<>%
+  select(-(living_sit:lonely)) %>%
+  select(-(living_sit_t5:lonely_change_t5))
+
+
+# Names of the t1 columns
+hrsn_t1_names <- names(hrsn_t1)
+
+# Set the new names of the t5 columns
+names(hrsn_t5) <- hrsn_t1_names
+
+
+# Merge harmonized columns back into data
+data %<>%
+  left_join(
+    bind_rows(hrsn_t1, hrsn_t5), 
+    by = c("record_id", "timepoint")) %>%
+  left_join(change_t5_columns, by = c("record_id", "timepoint"))
+
+# Remove un-necessary data
+rm(hrsn_t1, hrsn_t5, change_t5_columns)
 
 # Prep living_probs___*
 data %<>%
@@ -607,13 +979,30 @@ data %<>%
 
 # Summary of needs by domain
 # Pull redcap data in numeric format
-hrsn_data <- 
+hrsn_data_t1 <- 
   pull_redcap_report(Sys.getenv("LC_patient"), "176060", "raw", "raw", "false") %>%
+  filter(redcap_event_name == "consent_and_t1_sur_arm_1") %>%
   select(
     promis_record_id, 
     redcap_event_name,
     living_sit:lonely) %>%
   rename(record_id = promis_record_id)
+
+hrsn_data_t5 <- 
+  pull_redcap_report(Sys.getenv("LC_patient"), "176060", "raw", "raw", "false") %>%
+  filter(redcap_event_name == "t5_survey_arm_1") %>%
+  select(
+    promis_record_id, 
+    redcap_event_name,
+    living_sit_t5:lonely_t5) %>%
+  rename(record_id = promis_record_id) %>%
+  select(-ends_with("change_t5"))
+
+names(hrsn_data_t5) <- names(hrsn_data_t1)
+
+hrsn_data <- bind_rows(hrsn_data_t1, hrsn_data_t5)
+
+rm(hrsn_data_t1, hrsn_data_t5)
 
 hrsn_data %<>%
   mutate(
@@ -654,7 +1043,7 @@ data %<>%
       c(living_sit, food_worry:lonely), 
       ~ fct_na_value_to_level(.x, level = "Unknown")))
 
-
+rm(hrsn_data)
 
 # Experiences with care -------------------------------------------------------
 data %>%
@@ -687,7 +1076,13 @@ data %>%
       "No"))))
 
 
-# LEFT OFF HERE
-# Any other instrument that was not adminisitered at t1
-
 # Disability ------------------------------------------------------------------
+# Only administered at t2
+data %<>%
+  rename(disability = dsiability) %>%
+  mutate(disability = fct_na_value_to_level(factor(disability), level = "Unknown"))
+
+# data %>%
+#   filter(timepoint == 2) %>% 
+#   select(disability) %>%
+#   tbl_summary()

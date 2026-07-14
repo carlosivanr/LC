@@ -13,7 +13,6 @@ execute:
   echo: false
 ---
 
-
 ```{r}
 # Carlos Rodriguez, PhD. CU Dept. of Family Medicine
 # 01-15-2026
@@ -24,7 +23,6 @@ execute:
 # file that has been modified to display all of the survey questions by 
 # site_type (MDC or PCC).
 ```
-
 
 ```{r, message=FALSE, warning=FALSE}
 library(magrittr, include = "%<>%")
@@ -61,7 +59,6 @@ tab_data <- data %>%
     across(enrollstatus:healthrelated_social_needs_complete, ~ ifelse(is.na(.x), "Unknown", .x))) %>%
   filter(patient_consent_form_complete == 1 | patient_consent_form_complete == "Complete")
 ```
-
 
 ```{r}
 t1 <- data %>% filter(record_id %in% tab_data$record_id, redcap_event_name == "consent_and_t1_sur_arm_1")
@@ -104,7 +101,7 @@ t1 %>%
 # Patient race and ethnicity
 t1 %>%
   select(site_type, patient_race___1:patient_race___7, patient_ethn) %>%
-  mutate(across(patient_race___1:patient_race___7, ~ factor(.x, levels = c(0, 1)))) %>%
+  mutate(across(patient_race___1:patient_race___7, ~ factor(ifelse(is.na(.x), 0, 1), levels = c(0, 1)))) %>%
   tbl_summary(
     by = site_type,
     label = list(
@@ -203,7 +200,7 @@ t1 %>%
     ),
     value = everything() ~ "1"
   ) %>%
-    add_overall() %>% add_p()
+  add_overall() %>% add_p()
 ```
 
 ## Patient employment status current
@@ -223,7 +220,7 @@ t1 %>%
       ),
     value = everything() ~ "1"
   ) %>%
-    add_overall() %>% add_p()
+  add_overall() %>% add_p()
 ```
 
 # Patient clinical questions
@@ -241,7 +238,6 @@ t1 %>%
     everything() ~ "t.test",
     test.args = all_tests("t.test") ~ list(var.equal = TRUE))
 ```
-
 
 ## Do you now have a diagnosis from a health care provider of Long COVID?
 ```{r}
@@ -269,13 +265,8 @@ t1 %>%
   )
 ```
 
-
 ## 	Which of the following conditions had you been diagnosed with prior to (before) developing Long COVID symptoms? (check all that apply)
-
 ```{r}
-t1 %<>% 
-  mutate(across(conditions___1:conditions___14, ~ factor(ifelse(.x == "Checked", 1, 0), levels = c(0, 1))))
-
 # Order the condition from most frequent to least frequent
 ordered_conditions <- t1 %>% 
   select(conditions___1:conditions___14) %>%
@@ -333,8 +324,8 @@ if (other_condition_n >= 1) {
 ## Have you received or increased your dose of any of the following medications specifically for Long COVID or Long COVID symptoms? (select all that apply)
 ```{r}
 # Order the medications from most frequent to least frequent
-t1 %<>% 
-  mutate(across(medications___1:medications___13, ~ factor(ifelse(.x == "Checked", 1, 0), levels = c(0, 1))))
+# t1 %<>% 
+#   mutate(across(medications___1:medications___13, ~ factor(ifelse(.x == "Checked", 1, 0), levels = c(0, 1))))
 
 ordered_medications <- t1 %>% 
   select(medications___1:medications___13) %>%
@@ -388,8 +379,8 @@ if (other_medication_n >= 1) {
 
 ## Have you received any of the following therapies specifically for Long COVID or Long COVID symptoms? (select all that apply)
 ```{r}
-t1 %<>%
-  mutate(across(therapies___13:therapies___21, ~ factor(ifelse(.x == "Checked", 1, 0), levels = c(0, 1))))
+# t1 %<>%
+#   mutate(across(therapies___13:therapies___21, ~ factor(ifelse(.x == "Checked", 1, 0), levels = c(0, 1))))
 
 ordered_therapies <- t1 %>%
   select(therapies___13:therapies___21) %>%
@@ -732,7 +723,7 @@ t1 %>%
   )
 ```
 
-
+<!-- TILE PLOTS -->
 ## Average symptom burden, severity, and frequency
 * Symptoms ordered by frequency as in the previous chart
 * All burden, severity, and frequency questions are branched and presented only if patient responded endorsed experiencing the given symptom.
@@ -787,8 +778,8 @@ t1 %>%
 ```
 
 
-## Mean score of "lack of understanding" scale from Illness Invalidation Inventory for PCC
-* n.b. Subsets to those that answered "Yes" to the question "Have you had one or more appointments with medical providers at a primary care clinic in the past three months?" or "Have you had one or more appointments with medical providers at a multi-disciplinary Long COVID clinic in the past three months?"
+## Mean score of "lack of understanding" scale from Illness Invalidation Inventory for experiences with PCC appointments
+* n.b. Subsets to those that answered "Yes" to the question "Have you had one or more appointments with medical providers at a primary care clinic in the past three months?"
 * Scale ranges from 1(min) to 5(max), with 1 indicating the lowest perceived understanding from medical providers and 5 indicated the highest perceived understanding.
 
 ```{r}
@@ -834,6 +825,8 @@ t1 %>%
   add_p()
 ```
 
+
+<!-- EXPERIENCES WITH MDC -->
 ## Have you had one or more appointments with medical providers at a multi-disciplinary Long COVID clinic in the past three months?
 ```{r}
 t1 %>%
@@ -841,6 +834,20 @@ t1 %>%
   tbl_summary(by = site_type) %>%
   add_overall() %>% 
   add_p()
+```
+
+## Mean score of “lack of understanding” scale from Illness Invalidation Inventory for experiences with MDC appointments
+•	n.b. Subsets to those that answered “Yes” to the question “Have you had one or more appointments with medical providers at a multi-disciplinary care clinic in the past three months?”
+•	Scale ranges from 1(min) to 5(max), with 1 indicating the lowest perceived understanding from medical providers and 5 indicated the highest perceived understanding.
+
+```{r}
+t1 %>%
+  filter(mdc_appts == "Yes") %>%
+  select(lou_score_mdc) %>%
+  tbl_summary(
+    type = everything() ~ "continuous",
+    statistic = everything() ~ "{mean} ({sd}); [{min}, {median}, {max}]"
+  )
 ```
 
 <!-- INDIVIDUAL SCORES -->

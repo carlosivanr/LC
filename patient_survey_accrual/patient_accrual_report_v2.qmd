@@ -20,231 +20,23 @@ execute:
 # Long COVID - Patient Accrual Report
 
 # This file is designed to generate a report indicating which patients have 
-# completed their surveys in teh AHRQ Long COVID project.
+# completed their surveys in the AHRQ Long COVID project.
 ```
 
 ```{r, message=FALSE, warning=FALSE}
-library(magrittr, include = "%<>%")
-
-library(dfmtbx)
-# renv::install("carlosivanr/dfmtbx") # To update
-
-pacman::p_load(
-  tidyverse,
-  gtsummary
-)
-```
-
-```{r}
 #| echo: false
-# Participant accrual report draft
-# Project ID = 33298
-# Report ID = 148994
+library(magrittr, include = "%<>%")
+library(tidyverse)
+library(gtsummary)
+library(dfmtbx)
 ```
 
 ```{r, message=FALSE, warning=FALSE}
-# Pull report 148994 as labeled data
-# Corresponds to patient_enrollment report in REDCap
-data <- pull_redcap_report(Sys.getenv("LC_patient"), "148994", "label", "raw", "true")
-
-# Capture the column names
-names_data <- names(data)
-
-# Drop the demographic select all that apply questions
-data %<>%
-  select(
-    -starts_with("patient_race"),
-    -starts_with("patient_insurance"),
-    -starts_with("patient_employ"),
-    -redcap_event_name # use raw instead of label to preserve prior functions
-)
+# Loads pasc severity data and loads functions for displaying the tiles along 
+# with preparing all data.
+source("d:/long_covid/scripts/functions/prep_redcap_data.R")
 ```
 
-```{r, message=FALSE, warning=FALSE}
-# Pull report 148994 as raw data for the demographic variables only
-demographics <- 
-  pull_redcap_report(Sys.getenv("LC_patient"), "148994", "raw", "raw", "false") %>%
-  select(
-    redcap_event_name,
-    starts_with("patient_race"),
-    starts_with("patient_insurance"),
-    starts_with("patient_employ")
-  )
-```
-
-```{r}
-# Merge the primary data set with the demographic data set
-data <- bind_cols(data, demographics)
-
-# Re-order the columns to preserve the order in the the data frame data
-data %<>%
-  select(all_of(names_data))
-
-# Rename promis_record_id to record_id (easier to type)
-data %<>%
-  rename(record_id = promis_record_id)
-
-# Clear workspace variables
-rm(demographics, names_data)
-```
-
-
-```{r}
-# Determine how many time points are available. As of 09/29/2025, 
-# There are 7 unique time points
-# The first 2 are housekeeping
-# 1. patient_pre_enrollm_arm_1
-# 2. screening_and_enro_arm_1
-# 3. consent_and_t1_sur_arm_1
-# 4. t2_survey_arm_1
-# 5. t3_survey_arm_1
-# 6. t4_survey_arm_1
-# 7. t5_survey_arm_1
-timepoints <- length(table(data$redcap_event_name))
-
-# Send an email as soon as an additional time point is added
-if (timepoints > 6) {
-  # If there are duplicates, notify by email
-  library(Microsoft365R)
-
-  # Authenticate and get your Outlook object
-  outlook <- get_business_outlook()  # or get_personal_outlook()
-
-  # Create and send an email
-  email <- outlook$create_email(
-    body = "T5 data detected in Long COVID RedCap. Update patient_accrual_report_v2.qmd in D:\\long_covid\\patient_survey_accrual\\patient_accrual_report_v2.qmd",
-    subject = "Long COVID: New timepoint detected.",
-    to = "carlos.i.rodriguez@cuanschutz.edu"
-  )
-
-  email$send()
-  
-}
-```
-
-
-```{r}
-# Identify test records as those with the "test" in the name field OR those
-# with "test record" in the anything else field
-# ids 14, 15, 16, and 18 flagged as test Ids. (CR 12/09/2025)
-# ids, 64, 65 flagged as test ids. (CR 2/23/2026)
-test_ids <-
-  data %>%
-    filter(
-      grepl("test", name, ignore.case = TRUE) | 
-      grepl("test record", anythingelse, ignore.case = TRUE) |
-      grepl("test", study_label, ignore.case = TRUE)
-      ) %>%
-    pull(record_id)
-
-
-# Identify duplicated record_ids as those with "Duplicated record" in the 
-# enrollstatus field
-# Ids 10, 35, 36, 38, flagged as duplicate Ids
-# Id 69 flagged as duplicate (02/23/2026)
-duplicated_ids <- 
-  data %>%
-    filter(
-      grepl("duplicate", enrollstatus, ignore.case = TRUE) |
-      grepl("duplicate", study_label, ignore.case = TRUE)
-      ) %>%
-    pull(record_id)
-
-# Remove the test and duplicated ids
-data %<>%
-  filter(!record_id %in% c(test_ids, duplicated_ids))
-
-
-# Capture those that completed the enrollment step
-enrollment_completed_ids <- data %>%
-  filter(enrollstatus == "Enrollment completed") %>%
-  pull(record_id)
-
-
-# ids flagged as loss to follow up
-ltfu_ids <- data %>%
-  filter(grepl("ltfu", study_label, ignore.case = TRUE)) %>%
-  pull(record_id)
-
-data %<>%
-  mutate(enrollstatus = ifelse(record_id %in% ltfu_ids, "LTFU", enrollstatus))
-
-# Ids that declined
-declined_ids <- data %>%
-  filter(grepl("declined", study_label, ignore.case = TRUE)) %>%
-  pull(record_id)
-
-data %<>%
-  mutate(enrollstatus = ifelse(record_id %in% declined_ids, "Declined", enrollstatus))
-```
-
-```{r}
-# /////////////////////////////// Data Clean Up ///////////////////////////////
-# Create a site variable by coalescing mdc_name and pcc_name before filling
-# values
-data %<>%
-  mutate(site_name = coalesce(mdc_name, pcc_name))
-
-# Fill in empty values for pcc_or_mdc, mdc_name, and pcc_name columns
-data %<>%
-  group_by(record_id) %>%
-  fill(pcc_or_mdc, .direction = c("updown")) %>%
-  fill(site_name, .direction = c("updown")) %>%
-  ungroup()
-
-# Rename pcc_or_mdc to site_type for readability, and make unknown explicit
-data %<>%
-  rename(site_type = pcc_or_mdc) %>%
-  mutate(site_type = ifelse(is.na(site_type), "Unknown", site_type)) %>%
-  mutate(site_name = ifelse(is.na(site_name), "Unknown", site_name))
-```
-
-```{r}
-# ////////////////////////// Data check for consent ///////////////////////////
-# Check to ensure that if the consent_name and patient_consent_form_complete 
-# are both missing to validate that one or the other can be used to reliably 
-# indicate whether consent was given,
-mismatched_consent_values <- 
-  data %>% 
-  filter(is.na(consent_name) & patient_consent_form_complete == "Complete") %>% 
-  nrow()
-
-# If the number of mismatched_consent_values is not 0, then notify by sending
-# an email to manually review records
-if (mismatched_consent_values > 0) {
-  # If there are duplicates, notify by email
-  library(Microsoft365R)
-
-  # Authenticate and create Outlook object
-  outlook <- get_business_outlook()  # or get_personal_outlook()
-
-  # Create email
-  email <- outlook$create_email(
-    body = "Error in patient_accrual_report.qmd. Mismatched consent values detected.",
-    subject = "Error in Long COVID automated workflow.",
-    to = "carlos.i.rodriguez@cuanschutz.edu"
-  )
-
-  # Send email
-  email$send()
-
-  # Stop the render
-  stop("Error in .qmd file. Logic error in counting consented vs consent form complete. Review data.")
-}
-```
-
-
-```{r}
-# DEVELOPMENT
-# Remove enrollstatus == "No response" | is.na(enrollstatus)
-# These would be classified as those that have not been contacted yet either 
-# because the candidate has not been reached, or the study team hasn't gotten
-# to attempting contact yet. Would be used to filter out any of these IDs from
-# tabulating, but not yet implemented. CR 09/29/2025
-no_contact_ids <- data %>%
-  filter(redcap_event_name == "screening_and_enro_arm_1", is.na(enrollstatus)) %>%
-  pull(record_id)
-```
 
 ```{r}
 #  Create a dataframe with binary variables to tabulate the number of screened, 
@@ -265,17 +57,16 @@ tab_data <- data %>%
     across(healthrelated_social_needs_complete, ~ ifelse(is.na(.x), "Unknown", .x))) %>%
   mutate(across(enrollstatus, ~ ifelse(is.na(.x), "TBD", .x))) %>%
   mutate(across(patient_consent_form_complete, ~ ifelse(is.na(.x), "Incomplete", .x)))
-
 ```
 
 ```{r}
 #| eval: false
 
 # What would study_label look like if tabulated
-data %>%
-  select(study_label) %>%
-  drop_na() %>%
-  tbl_summary()
+# data %>%
+#   select(study_label) %>%
+#   drop_na() %>%
+#   tbl_summary()
 ```
 
 # Referring clinic (pcc_or_mdc_name)
@@ -497,6 +288,49 @@ rates <-
 rates %>%
   select(-record_id, -days_since_t1) %>%
   tbl_summary()
+```
+
+```{r}
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# LEFT OFF HERE SOME PATIENTS LIKE RECORD IDS 34 AND 69 END UP WITH NEGATIVE 
+# VALUES WITH THIS CODE THAT IS DESIGNED TO COUNT HOW LONG IT TAKES FROM INVITE
+# TO SURVEY COMPLETION FOR THE POST-T1 SURVEYS.
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+# rates
+
+# Need time timestamps for t2, t3, t4, and t5, when complete
+times <- data %>%
+  # Make t1, t2, t3, t4, and t5 timestamps
+  filter(
+    record_id %in% consented_ids, 
+    !redcap_event_name %in% c("patient_preenrollm_arm_1", "screening_and_enro_arm_1") ) %>%
+  select(record_id, redcap_event_name, all_of(data %>% select(ends_with("timestamp")) %>% names())) %>%
+  mutate(across(patient_consent_form_timestamp:pasc_symptoms_only_t2_t4_timestamp, ~ as.Date(.x))) %>%
+
+# write_csv(times, "./patient_survey/data/long_covid_pt_survey_timestamps_qa.csv")
+
+
+  select(
+    record_id,
+    redcap_event_name,
+    patient_consent_form_timestamp, # *** For ids 55,34,37, 11, and 20, the hrsn timestamp for t1 does not match the consent timestamp. Almost as if the 1st hrsn was left blank and then a subsequent hrsn was filled in.
+    healthrelated_social_needs_timestamp, 
+    experiences_with_care_timestamp) %>%
+  mutate(across(patient_consent_form_timestamp:experiences_with_care_timestamp, ~ as.Date(.x))) %>%
+  mutate(timestamp =
+    coalesce(
+      patient_consent_form_timestamp,
+      healthrelated_social_needs_timestamp, 
+      experiences_with_care_timestamp)) %>%
+  select(-(patient_consent_form_timestamp:experiences_with_care_timestamp)) %>%
+  group_by(record_id) %>%
+  pivot_wider(names_from = "redcap_event_name", values_from = "timestamp") %>%
+  ungroup() %>%
+  mutate(
+    time_to_t2 = t2_survey_arm_1 - consent_and_t1_sur_arm_1
+)
 ```
 
 ```{r}

@@ -533,6 +533,10 @@ data %>%
   tbl_summary(by = redcap_event_name)
 ```
 
+## Mean score of "lack of understanding" scale from Illness Invalidation Inventory MDC
+* n.b. Subsets to those that answered "Yes" to the question "Have you had one or more appointments with medical providers at a multi-disciplinary care clinic in the past three months?"
+* Scale ranges from 1(min) to 5(max), with 1 indicating the lowest perceived understanding from medical providers and 5 indicated the highest perceived understanding.
+* Only asked at T1 and T5
 ```{r}
 # This should be two variables lack_understand_pcc, and lack_understand_mdc, and each is subset to "Yes" in appts_mdc or appts_pcc
 data %>%
