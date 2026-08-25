@@ -33,7 +33,7 @@ data <- pull_redcap_report(
 # data$other_med
 
 # T5 Columns that won't download. Columns will not export to .xlsx either
-# May possibly be due no one having data in there at this point
+# May possibly be due to no one having data in there at this point
 # data$conditions_other_t5
 # data$other_med_t5
 # data$other_service_t5
@@ -87,7 +87,7 @@ data %<>%
     "t2_survey_arm_1" ~ 2,
     "consent_and_t1_sur_arm_1" ~ 1,
     .default = NA)
-  ) 
+  )
 
 
 # Check columns
@@ -136,7 +136,7 @@ data %<>%
   filter(!record_id %in% c(test_ids, duplicated_ids))
 
 # Create an updated enroll status column, this coalesces the not_enrolled_status
-# and then enrollstatus column, which updates the status to the current status
+# and then enrollstatus column
 data %<>%
   mutate(current_enroll_status = coalesce(not_enrolled_status, enrollstatus))
 
@@ -154,6 +154,22 @@ if (all_t1_complete != "Complete"){
   stop("Check completed status of enrolled and T1 PASC.")
 }
 
+
+# ----------
+enrollment_completed_ids <- data %>% 
+  filter(redcap_event_name == "screening_and_enro_arm_1") %>% 
+  select(record_id, redcap_event_name, enrollstatus) %>%
+  filter(enrollstatus == "Enrollment completed") %>%
+  pull(record_id)
+
+consented_ids <- data %>%
+  filter(record_id %in% enrollment_completed_ids) %>%
+  filter(redcap_event_name == "consent_and_t1_sur_arm_1") %>%
+  select(record_id, redcap_event_name, patient_consent_form_timestamp, consent_name) %>%
+  drop_na(consent_name) %>%
+  pull(record_id)
+
+# ----------
 
 # Come up with a way to determine where the drop out occured, T1, T2, etc.
 data %>%
@@ -835,11 +851,29 @@ lou_mdc_means <- data %>%
 
 
 # Model the difference at time between PCC and MDC LOU scores
-model <- lmerTest::lmer(score ~ type + (1 | record_id), data = (lou_data_long %>% filter(timepoint == 1)))
+lou_model <- lmerTest::lmer(score ~ type + (1 | record_id), data = (lou_data_long %>% filter(timepoint == 1)))
 
-emms <- emmeans::emmeans(model, ~ type, lmer.df = "satterthwaite") %>% 
+emms <- emmeans::emmeans(lou_model, ~ type, lmer.df = "satterthwaite") 
+
+lou_diffs_tab <- data.frame(emms) %>% 
+  mutate(mean_se = str_c(round(emmean, 2), "(", round(SE, 2), ")")) %>%
+  select(type, mean_se) %>%
+  pivot_wider(names_from = type, values_from = mean_se)
+
+emms %<>% 
   pairs() %>% 
   as_tibble()
+
+
+lou_diffs_tab %<>%
+  mutate(
+    Difference = emms$estimate,
+    P = emms$p.value,
+    item = "Overall") %>%
+  select(item, everything()) %>%
+  rename(experiences_mdc = lou_score_mdc, experiences_pcc = lou_score_pcc)
+
+
 
 # Calculate the diffs and the SEs at time point 1
 lou_item_level_long <- data %>%
@@ -858,11 +892,41 @@ lou_item_level_long <- data %>%
 
 
 display_se <- function(df) {
+
+  item_level <- df %>% 
+    slice_head() %>% 
+    pull(item)
+
+  item_level <- sub("_.*", "", item_level)
+
   model <- lmerTest::lmer(value ~ item + (1 | record_id), data = df)
 
-  emmeans::emmeans(model, ~ item, lmer.df = "satterthwaite") %>% 
+  emms <- emmeans::emmeans(model, ~ item, lmer.df = "satterthwaite") 
+
+  item_diffs_tab <- data.frame(emms) %>% 
+    mutate(mean_se = str_c(round(emmean, 2), "(", round(SE, 2), ")")) %>%
+    select(item, mean_se) %>%
+    pivot_wider(names_from = item, values_from = mean_se)
+
+  emms %<>% 
     pairs() %>% 
     as_tibble()
+
+  item_diffs_tab %<>%
+    mutate(
+      Difference = emms$estimate,
+      P = emms$p.value,
+      item = item_level) %>%
+    select(item, everything())
+
+  names(item_diffs_tab) <- c("item", "experiences_mdc", "experiences_pcc", "Difference", "P")
+
+
+  lou_diffs_tab <- bind_rows(
+    lou_diffs_tab,
+    item_diffs_tab)
+  
+  return(lou_diffs_tab)
 
 }
 
@@ -872,7 +936,7 @@ display_se <- function(df) {
 # the master t1 template .qmd docs.
 # serious (produces is singular warning)
 # Likely due to a small number of participants with 2 items
-lou_item_level_long %>%
+lou_diffs_tab <- lou_item_level_long %>%
   filter(item %in% c("serious_mdc", "serious_pcc")) %>%
   display_se()
 
@@ -881,14 +945,17 @@ lou_item_level_long %>%
 # test_model <- lmerTest::lmer(value ~ item + (1 | record_id), data = test_data)
 
 # consequences
-lou_item_level_long %>%
+lou_diffs_tab <- lou_item_level_long %>%
   filter(item %in% c("consequences_mdc", "consequences_pcc")) %>%
   display_se()
 
 # talk
-lou_item_level_long %>%
+lou_diffs_tab <- lou_item_level_long %>%
   filter(item %in% c("talk_mdc", "talk_pcc")) %>%
   display_se()
+
+
+View(lou_diffs_tab)
 # -----------------------------------------------------------------------------
 
 
