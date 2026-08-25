@@ -60,6 +60,111 @@ tab_data <- data %>%
 ```
 
 ```{r}
+#| echo: false
+#| eval: false
+# Completed enrollments per month
+enrollments_per_mon <- data %>%
+  select(
+    record_id,
+    patient_consent_form_timestamp,
+    enrollstatus, 
+    patient_consent_form_complete, 
+    healthrelated_social_needs_complete,
+    participatingclinic, 
+    site_name
+  ) %>%
+  group_by(record_id) %>%
+  fill(
+    patient_consent_form_timestamp,
+    enrollstatus, 
+    patient_consent_form_complete, 
+    healthrelated_social_needs_complete, 
+    participatingclinic, 
+    site_name,  
+    .direction = "updown") %>%
+  slice_head() %>%
+  ungroup() %>%
+  filter(enrollstatus == "Enrollment completed") %>%
+  mutate(year_mon = format(as.Date(patient_consent_form_timestamp), "%Y-%m"))
+
+
+min(as.character(enrollments_per_mon$year_mon))
+max(as.character(enrollments_per_mon$year_mon))
+
+
+
+enrollments_per_mon %<>% 
+  group_by(
+    site_name,
+    year_mon
+  ) %>%
+  summarise(
+    total_enrolled = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(year_mon = factor(year_mon)) %>%
+  complete(year_mon, site_name, fill = list(total_enrolled = 0)) %>%
+  arrange(site_name)
+
+
+# Create 
+set.seed(999)  # makes the split reproducible
+
+site_map <- data.frame(
+  site_name = unique(enrollments_per_mon$site_name),
+  site_type = sample(rep(c("A", "B"), length.out = length(unique(enrollments_per_mon$site_name))))
+)
+
+enrollments_per_mon %>%
+  arrange(site_name, year_mon) %>%
+  group_by(site_name) %>%
+  mutate(total_enrolled = cumsum(total_enrolled)) %>%
+  ungroup() %>%
+  left_join(site_map, by = "site_name") %>%
+  ggplot(aes(x = year_mon, y = total_enrolled, group = site_name, color = site_name)) +
+  geom_line() +
+  geom_point(alpha = .5) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    y = "Total Cumulative Enrollment", 
+    x = "Month",
+    color = "Site") +
+  facet_grid(site_type ~ .)
+
+
+
+# Write out to .csv
+enrollments_per_mon %>%
+  arrange(site_name, year_mon) %>%
+  group_by(site_name) %>%
+  mutate(cumulative_enrolled = cumsum(total_enrolled)) %>%
+  write_csv( file = "D:\\long_covid\\patient_survey_accrual\\enrolled_per_month.csv")
+```
+
+```{r}
+#| echo: false
+#| eval: false
+
+
+# Create a month index
+enrollments_per_mon %<>%
+  arrange(site_name, year_mon) %>%
+  group_by(site_name) %>%
+  mutate(month_index = 0:(n() - 1))
+
+model <- lm(total_enrolled ~ month_index * site_name, data = enrollments_per_mon)
+
+newdata <- expand.grid(
+  month_index = 14:19,
+  site_name = unique(enrollments_per_mon$site_name)
+)
+
+predict(model, newdata)
+```
+
+```{r}
 #| eval: false
 
 # What would study_label look like if tabulated
@@ -94,6 +199,32 @@ tab_data %>%
   modify_header(label = "**Total unique patients**")
 ```
 
+```{r}
+#| eval: false
+# Filter the rows to those that are consented and tabulate sex and race
+data %>%
+  filter(!is.na(consent_name)) %>%
+  select(record_id, race, patient_gender) %>%
+  mutate(patient_sex = ifelse(!patient_gender %in% c("Female", "Male"), "Other", patient_gender)) %>%
+  rename(patient_race = race) %>%
+  mutate(patient_race = ifelse(patient_race == "Prefer not to answer", "Other", patient_race)) %>%
+  select(-record_id, -patient_gender) %>%
+  tbl_summary() %>%
+  as_tibble() %>%
+  write_csv("D:\\long_covid\\patient_survey_accrual\\patient_sex_race.csv")
+
+
+View(
+  data %>%
+  filter(!is.na(consent_name)) %>%
+  select(record_id, race, patient_gender) %>%
+  mutate(patient_sex = ifelse(!patient_gender %in% c("Female", "Male"), "Other", patient_gender)) %>%
+  rename(patient_race = race) %>%
+  mutate(patient_race = ifelse(patient_race == "Prefer not to answer", "Other", patient_race)) %>%
+  select(-record_id, -patient_gender) %>%
+  tbl_summary(by = patient_sex) %>%
+  as_tibble())
+```
 
 # Consented patients by Site Type and Site Name
 ```{r}

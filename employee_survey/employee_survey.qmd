@@ -42,6 +42,21 @@ labels <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "labe
 ```
 
 ```{r}
+# create site_name
+data %<>%
+  mutate(practice_name = coalesce(practice_name, mdc_name))
+
+# Calculate the invites
+invites_per_clinic <- data %>%
+  group_by(practice_name) %>%
+  count()
+
+write_csv(
+  invites_per_clinic,
+  "D:\\long_covid\\employee_survey\\number_of_invites_per_clinic.csv")
+```
+
+```{r}
 # Create a field-name to label-name dictionary given two data frames in the 
 # workspace named labels and data, where data is the report pulled from Redcap
 # in raw format and labels is the same report but with the label format.
@@ -99,6 +114,19 @@ data %<>%
   filter(!is.na(consent_name))
 ```
 
+```{r}
+#| eval: false
+
+# Tabulate employee sex for continuing review (Izzy Nowakowski) 08/13/2026
+data %>%
+  select(gender) %>%
+  mutate(gender = ifelse(!gender %in% c("Female", "Male"), "Other", gender)) %>%
+  rename(employee_gender = gender) %>%
+  tbl_summary() %>%
+  as_tibble() %>%
+  write_csv(., "D:\\long_covid\\employee_survey\\employee_gender.csv")
+```
+
 # Completion rate
 * Denominator is the number of people that provided consent
 ```{r}
@@ -149,6 +177,11 @@ data %<>%
 # Create a ordered factor for age_range
 data %<>%
   mutate(age_range = factor(age_range, levels = c("Under 30", "30-45", "46-60", "Over 60")))
+
+# create site_name
+# data %<>%
+#   mutate(practice_name = coalesce(practice_name, mdc_name))
+
 ```
 
 ```{r}
@@ -753,6 +786,41 @@ data %>%
 # When comparing across both MDC and PCC clinics, none of the
 # subscales are different suggesting that the practice cultures
 # don't differ, unlike implementation climate.
+```
+
+
+```{r}
+# Tabulate practice culture by clinic. There are several responses where someone did not provide a clinic name so those responses were not analyzed (46 total) as of 08/03/2026.
+
+data %>%
+  select(pc_imp_subscore:CultureAvg, practice_name) %>%
+  tbl_summary(by = practice_name,
+    type = everything() ~ "continuous",
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})")
+  ) %>%
+  add_overall()
+
+
+practice_culture_values <- data %>%
+  select(pc_imp_subscore:CultureAvg, practice_name) %>%
+  select(-pc_chs_subscore) %>%
+  rename(pc_chs_subscore = Chaos_rev) %>%
+  pivot_longer(cols = pc_imp_subscore:CultureAvg, names_to = "var") %>%
+  drop_na() %>%
+  group_by(practice_name, var) %>%
+  summarise(
+    n = length(value),
+    mean = mean(value),
+    std = sd(value),
+    min = min(value),
+    max = max(value),
+    .groups = "drop") # %>%
+  # mutate(across(n:max, ~ round(.x, 2))) %>%
+  # mutate(value = str_c(n,"; ", mean, " (", std, " );", min, " - ", max)) %>%
+  # select(practice_name, var, value) %>%
+  # pivot_wider(names_from = var, values_from = value)
+
+
 ```
 
 ## Overall frequencies
