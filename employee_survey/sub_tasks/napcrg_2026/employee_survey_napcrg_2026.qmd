@@ -1,0 +1,1372 @@
+---
+title: "Employee Survey (draft)"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format:
+# Out put to Word
+  docx:
+    toc: true
+    embed-resources: true
+    reference-doc: "D:/custom-reference-doc.docx"
+
+# Out put to html
+  # html:
+    # toc: true
+
+execute: 
+  echo: false
+---
+
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
+# AHRQ Long COVID - employee survey
+# /////////////////////////////////////////////////////////////////////////////
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+library(dfmtbx)
+
+pacman::p_load(
+  tidyverse,
+  gtsummary
+)
+```
+
+```{r, message=FALSE, warning=FALSE}
+data <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "raw", "false")
+data_numeric <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "raw", "raw", "false")
+labels <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "label", "false")
+```
+
+```{r}
+# Create a field-name to label-name dictionary given two data frames in the 
+# workspace named labels and data, where data is the report pulled from Redcap
+# in raw format and labels is the same report but with the label format.
+create_name_dict <- function(){
+  # create a dictionary
+  dict <- data.frame( 
+  field_name = names(data), 
+  label = names(labels))
+
+  return(dict)
+}
+```
+
+```{r}
+# Function that converts a raw header to a label header, requires the dict
+# data frame to be present in the workspace
+raw_to_label_header <-  function(df) {
+
+  temp <- df
+
+  current_names <- names(df)
+  
+  new_names <- dict %>% 
+    filter(field_name %in% current_names) %>% 
+    pull(label)
+  
+  names(temp) <- new_names
+
+  return(temp)
+
+}
+```
+
+```{r}
+# Function to convert Unkowns to Missing
+```
+
+```{r}
+# Create the label header dictionary
+dict <- create_name_dict()
+```
+
+```{r}
+# Subset data to PCC only
+data_pcc <- data %>%
+  filter(pcc_or_mdc == "practice")
+
+data_numeric_pcc <- data_numeric %>%
+  filter(pcc_or_mdc == "practice")
+
+labels_pcc <- labels %>%
+  filter("Primary Care Center (practice) or Multi-Disciplinary Center (clinic) employee?" == "practice")
+```
+
+# Consent rate PCC
+- Denominator is the total number of records available in Redcap
+```{r}
+# use the name variable
+data_pcc %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+```
+
+```{r}
+# Use the consent_complete variable
+data_pcc %>%
+  select(employee_consent_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+#| eval: false
+test <- data_pcc %>%
+  select(
+    record_id, consent_name, 
+    employee_consent_complete, employee_survey_t1_complete,
+    employee_compensation_t1_complete, practice_name)
+
+test %>%
+  select(-record_id, -consent_name, -practice_name) %>%
+  tbl_summary()
+
+test %>%
+  filter(!is.na(consent_name)) %>%
+  select(-record_id, -consent_name, -practice_name) %>%
+  tbl_summary()
+
+test %>%
+  select(practice_name) %>%
+  tbl_summary()
+
+test %>%
+  filter(employee_compensation_t1_complete == "Complete") %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+
+```
+
+```{r}
+#| eval: false
+# Read in kristen's file for amc only
+kristens_amc <- read_csv("D:\\long_covid\\employee_survey\\data_qa\\amc_surveys.csv", show_col_types = FALSE)
+
+# Kristen's files shows 33 and 3
+# not sure how x_complete is defined
+kristens_amc %>%
+  select(x_complete) %>%
+  tbl_summary() %>%
+  as_tibble()
+
+# What column maps onto x_complete
+data_pcc %>%
+  filter(practice_name == "AMC WISH Clinic") %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary() %>%
+  as_tibble()
+
+# clinic_names  <- table(data_pcc$practice_name) %>% names()
+
+# for (clin in clinic_names) {
+#   print(clin)
+
+#   tab <- data_pcc %>%
+#   filter(practice_name == clin) %>%
+#   select(employee_survey_t1_complete) %>%
+#   tbl_summary() %>%
+#   as_tibble()
+
+#   print(tab)
+# }
+
+data_pcc %>%
+  select(practice_name, employee_survey_t1_complete) %>%
+  tbl_summary(by = employee_survey_t1_complete) %>%
+  add_overall()
+```
+
+
+```{r}
+# Drop those that have not consented to participate
+# data_pcc %<>%
+#   filter(!is.na(consent_name))
+```
+
+# Completion rate PCC
+* Denominator is the number of people that provided consent
+```{r}
+data_pcc %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+data_pcc %<>%
+  filter(employee_survey_t1_complete == "Complete")
+```
+
+```{r}
+# filter data_numeric in the same way that data_raw is filtered
+data_numeric_pcc %<>%
+  filter(record_id %in% data_pcc$record_id)
+```
+
+# Consent rate
+- Denominator is the total number of records available in Redcap
+```{r}
+data %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+```
+
+```{r}
+# Drop those that have not consented to participate
+data %<>%
+  filter(!is.na(consent_name))
+```
+
+# Completion rate
+* Denominator is the number of people that provided consent
+```{r}
+data %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+data %<>%
+  filter(employee_survey_t1_complete == "Complete")
+```
+
+```{r}
+# filter data_numeric in the same way that data_raw is filtered
+data_numeric %<>%
+  filter(record_id %in% data$record_id)
+```
+
+<!-- Data processing -->
+```{r}
+# Recode pcc_or_mdc to MDC or PCC
+data %<>%
+  mutate(pcc_or_mdc = case_match(
+    pcc_or_mdc,
+    "practice" ~ "PCC",
+    "clinic" ~ "MDC",
+    .default = NA
+  ))
+
+data_numeric %<>%
+  mutate(pcc_or_mdc = case_match(
+    pcc_or_mdc,
+    1 ~ "PCC",
+    2 ~ "MDC",
+    .default = NA
+  ))
+
+# Create a categorical version of years of experience
+data %<>%
+  mutate(experience_cat = cut(experience, 
+   breaks =  c(-Inf, 1, 5, 10, Inf),
+   labels = c("<=1", "2-5", "6-10", ">10")))
+
+data %<>%
+  mutate(experience_cat = factor(experience_cat, levels = c("<=1", "2-5", "6-10", ">10")))
+
+# Create a ordered factor for age_range
+data %<>%
+  mutate(age_range = factor(age_range, levels = c("Under 30", "30-45", "46-60", "Over 60")))
+```
+
+# Demographics
+- subset of only those that completed
+```{r}
+#| eval: false
+data %>%
+  select(gender:personal_covid, experience_cat) %>%
+  select(-fte, -experience) %>% #omit fte until further processing
+  tbl_summary()
+```
+
+```{r}
+# Demographics by site type
+data %>%
+  select(gender:personal_covid, experience_cat, pcc_or_mdc) %>%
+  select(-fte, -experience) %>% #omit fte until further processing
+  # mutate(pcc_or_mdc = ifelse(pcc_or_mdc == "clinic", "MDC", "PCC")) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(age_range = factor(age_range, levels = c("Under 30", "30-45", "46-60", "Over 60", "Unknown"))) %>%
+  mutate(experience_cat = factor(experience_cat, levels = c("<=1", "2-5", "6-10", ">10"))) %>%
+  tbl_summary(
+    by = pcc_or_mdc,
+    label = list(
+      gender ~ "Gender",
+      age_range ~ "Age (years)",
+      personal_covid ~ "Personal COVID",
+      experience_cat ~ "Experience (years)"
+    )) %>%
+  add_overall()
+```
+
+# Practice role PCC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(practice_role_pcc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(label = practice_role_pcc ~ "Role PCC")
+```
+
+# To what extent do you agree with this statement: "Treatment and symptom management for patients with Long COVID is something that a primary care practice should provide to their patients as part of comprehensive primary care." Select one number. (PCC only)
+```{r}
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(agree_statement_pcc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary()
+```
+
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+# Figure: agree_statement_pcc
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(agree_statement_pcc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  ggplot(., aes(x = agree_statement_pcc)) +
+  geom_bar(aes(y = after_stat(count / sum(count))), fill = "steelblue") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Percentage", x = "Response") +
+  theme_minimal()
+```
+
+```{r}
+data_numeric %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(agree_statement_pcc) %>%
+  tbl_summary(
+    type = list(agree_statement_pcc ~ "continuous"),
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})"),
+    missing = "no"
+  )
+```
+
+
+# Practice role MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(practice_role_mdc) %>%
+  tbl_summary(label = list(practice_role_mdc ~ "Role MDC"))
+```
+
+
+## Practice role MDC = "Other"
+- Free text responses
+```{r}
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  filter(practice_role_mdc == "Other (please specify)") %>%
+  select(other_practice_role_mdc) %>%
+  gt::gt()
+```
+
+
+# Specialty MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(specialty_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(label = list(specialty_mdc ~ "Specialty MDC"))
+```
+
+
+# How satisfied are you with this [pcc_or_mdc]'s ability to help patients manage their Long COVID symptoms? Select the one best answer.
+```{r}
+data %>%
+  # mutate(pcc_or_mdc = ifelse(pcc_or_mdc == "clinic", "MDC", "PCC")) %>%
+  select(help_manage, pcc_or_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(by = pcc_or_mdc) %>%
+  add_overall()
+```
+
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+# Figure: help_manage
+
+data %>%
+  select(help_manage, pcc_or_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(by = pcc_or_mdc, 
+              digits = everything() ~ c(2,2),
+              statistic = everything() ~ "{p}") %>%
+  add_overall() %>%
+  modify_header(label ~ "Characteristic",
+                all_stat_cols() ~ "{level}") %>%
+  as_tibble() %>%
+  drop_na() %>%
+  pivot_longer(cols = c(Overall, MDC, PCC), values_to = "Percent", names_to = "Group") %>%
+  mutate(Percent = as.numeric(Percent)) %>% # To utilize the labels scales::percent divide by 100
+  rename(Response = Characteristic) %>%
+  ggplot(., aes(x = Response, y = Percent, fill = Group)) +
+  geom_col(position = "dodge2") +
+  geom_text(aes(label = scales::percent(Percent, scale = 1, accuracy = 1)),
+            position = position_dodge2(width = 0.9),
+            hjust = -0.1, # Adjust for horizontal text placement
+            size = 3) +
+  scale_y_continuous(labels = function(x) scales::percent(x, scale = 1)) +
+  ylim(0, 35) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  coord_flip()
+```
+
+
+# What are your concerns about starting/providing Long COVID treatment at this practice? Select all that apply (PCC only)
+```{r}
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(starts_with("starting_treatment_pcc")) %>%
+  mutate(across(everything(), ~ifelse(.x == "Checked", 1, 0))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0, 1)))) %>%
+  tbl_summary(
+    label = list(
+      starting_treatment_pcc___1 ~ "I/our providers don't have time in their schedule",
+      starting_treatment_pcc___2 ~ "We won't get paid / will lose money",
+      starting_treatment_pcc___3 ~ "I/our providers don't know how",
+      starting_treatment_pcc___4 ~ "I/our providers don't feel like patients will be able to successfully manage symptoms",
+      starting_treatment_pcc___5 ~ "I/our providers are not interested in providing Long COVID treatment",
+      starting_treatment_pcc___6 ~ "We don't have Long COVID treatment workflows set up in our practice",
+      starting_treatment_pcc___7 ~ "We don't have time to set up a new program",
+      starting_treatment_pcc___8 ~ "Our providers don't have the ancillary rehab supports needed to treat the condition (e.g. PT, OT, etc.)",
+      starting_treatment_pcc___9 ~ "Other",
+      starting_treatment_pcc___10 ~ "None of the above are concerns"),
+    value = list(starting_treatment_pcc___1 ~ "1",
+                 starting_treatment_pcc___2 ~ "1",
+                 starting_treatment_pcc___3 ~ "1",
+                 starting_treatment_pcc___4 ~ "1",
+                 starting_treatment_pcc___5 ~ "1",
+                 starting_treatment_pcc___6 ~ "1",
+                 starting_treatment_pcc___7 ~ "1",
+                 starting_treatment_pcc___8 ~ "1",
+                 starting_treatment_pcc___9 ~ "1",
+                 starting_treatment_pcc___10 ~ "1")
+  )
+```
+
+```{r, fig.height = 10, fig.width=6.5, fig.dpi = 600}
+new_names <- c("I/our providers don't have time in their schedule",
+    "We won't get paid / will lose money",
+    "I/our providers don't know how",
+    "I/our providers don't feel like patients will be able to successfully manage symptoms",
+    "I/our providers are not interested in providing Long COVID treatment",
+    "We don't have Long COVID treatment workflows set up in our practice",
+    "We don't have time to set up a new program",
+    "Our providers don't have the ancillary rehab supports needed to treat the condition (e.g. PT, OT, etc.)",
+    "Other",
+    "None of the above are concerns")
+
+df <- data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(starts_with("starting_treatment_pcc")) %>%
+  mutate(across(everything(), ~ifelse(.x == "Checked", 1, 0)))
+
+names(df) <- new_names
+
+ordered_names <- df %>%
+  pivot_longer(cols = everything(), names_to = "question", values_to = "response") %>%
+  group_by(question) %>%
+  summarise(sum = sum(response)) %>%
+  arrange(sum) %>%
+  pull(question)
+
+df %>%
+  pivot_longer(cols = everything(), names_to = "question", values_to = "response") %>%
+  group_by(question) %>%
+  summarize(percent_endorsed = mean(response) * 100) %>%
+  mutate(question = factor(question, levels = ordered_names)) %>%
+  ggplot(., aes(x = question, y = percent_endorsed)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 40)) +
+  scale_y_continuous(labels = function(x) scales::percent(x, scale = 1), limits = c(0, 65)) +
+  labs(x = "Response", y = "Percent Endorsed") +
+  theme_minimal()
+```
+
+# The following items assess the climate for managing Long COVID symptoms in this [pcc_or_mdc]. Please select one number for each item listed below.
+```{r}
+#| eval: false
+# tbl_summary version
+data %>%
+  select(expect_certain_number:appreciation, pcc_or_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(by = pcc_or_mdc) %>%
+  add_overall()
+```
+
+## Numeric scores
+```{r}
+# Currently only scores those with complete responses. If atleast one item is
+# missing, that participants scores are dropped.
+# For each participant, outputs an average across all 6 items.
+ic_scores <- data_numeric %>%
+    select(expect_certain_number:appreciation, record_id) %>%
+    score_ic_scale(., "record_id")
+```
+
+```{r}
+data %<>%
+  left_join(ic_scores, by = "record_id")
+```
+
+```{r}
+data %>%
+  select(AvgImplScale, pcc_or_mdc) %>%
+  tbl_summary(by = pcc_or_mdc,
+    type = all_continuous() ~ "continuous",
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75}))")
+  ) %>%
+  add_overall()
+```
+
+```{r}
+#| eval: false
+
+# Test if there is a statistical difference between MDC and PCC
+lm(AvgImplScale ~ pcc_or_mdc, data = (data %>%
+  select(AvgImplScale, pcc_or_mdc))) %>%
+  broom::tidy()
+
+# Data suggest there is a statisticaly significant difference in the 
+# implementation climate scores between MDC and PCC where PCC show
+# a lower mean response.
+```
+
+## Overall
+```{r}
+# tbl_likert version
+data %>%
+  select(expect_certain_number:appreciation) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "1 - Not at all",
+    "2",
+    "3 - Somewhat",
+    "4",
+    "5 - To a Great Extent",
+    "Unknown"
+  )))) %>%
+  tbl_likert()
+```
+
+
+## PCC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(expect_certain_number:appreciation) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "1 - Not at all",
+    "2",
+    "3 - Somewhat",
+    "4",
+    "5 - To a Great Extent",
+    "Unknown"
+  )))) %>%
+  tbl_likert()
+```
+
+## MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(expect_certain_number:appreciation) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "1 - Not at all",
+    "2",
+    "3 - Somewhat",
+    "4",
+    "5 - To a Great Extent",
+    "Unknown"
+  )))) %>%
+  tbl_likert()
+```
+
+# Confidence and effectiveness
+* Overall, how confident are you with your ability to provide high-quality symptom management assistance to your patients with Long COVID? 
+* Overall, how effective do you believe you are with helping your Long COVID patients to manage and treat symptoms? 
+* Subset to physician and APP at PCC or Physician, Resident, APP at MDC
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(confidence:effective) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary()
+```
+
+
+## Confidence and effectiveness PCC respondents only
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+data %>%
+  filter(pcc_or_mdc == "PCC", practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)")) %>%
+  select(confidence) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  ggplot(., aes(x = confidence)) +
+  geom_bar(aes(y = after_stat(count / sum(count))), fill = "steelblue") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Percentage", x = "Response") +
+  theme_minimal() +
+  coord_flip()
+```
+
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+data %>%
+  filter(pcc_or_mdc == "PCC", practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)")) %>%
+  select(effective) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  ggplot(., aes(x = effective)) +
+  geom_bar(aes(y = after_stat(count / sum(count))), fill = "steelblue") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Percentage", x = "Response") +
+  theme_minimal() +
+  coord_flip()
+```
+
+
+```{r}
+ids <- data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  pull(record_id)
+
+data_numeric %>%
+  filter(record_id %in% ids) %>%
+  select(confidence:effective) %>%
+  tbl_summary(
+    type = list(everything() ~ "continuous"),
+        statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})"),
+    missing = "no"
+  )
+```
+
+```{r}
+#| eval: false
+
+# Test to see if there is a difference between PCC and MDC
+lm(confidence ~ pcc_or_mdc, data = (data_numeric %>%
+  filter(record_id %in% ids) %>%
+  select(confidence:effective, pcc_or_mdc))
+) %>%
+  broom::tidy()
+
+
+lm(effective ~ pcc_or_mdc, data = (data_numeric %>%
+  filter(record_id %in% ids) %>%
+  select(confidence:effective, pcc_or_mdc))
+) %>%
+  broom::tidy()
+
+# Analyses show that there is a difference in confidence and effectiveness
+# pcc respondents score lower.
+```
+
+# Have you gotten additional CME on how to provide treatment for Long COVID?
+* Subset to physician and APP at PCC or Physician, Resident, APP at MDC
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(additional_cme) %>%
+  tbl_summary()
+```
+
+# To what extent do you provide these services for patients with Long COVID? Please check one box for each item listed below.  
+* Subset to physician and APP at PCC or Physician, Resident, APP at MDC
+```{r}
+#| eval: false
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(identify_patients:other_service_matrix) %>%
+  tbl_summary()
+```
+
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(identify_patients:other_service_matrix) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "Not at All",
+    "Sometimes",
+    "Very Often",
+    "Unknown"
+  )))) %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+# I am not involved in any of the items listed above
+* Subset to physician and APP at PCC or Physician, Resident, APP at MDC
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") | 
+    practice_role_mdc %in% c("Physician", "Resident physician/Fellow", "Certified nurse specialist, nurse practitioner, or advanced practice nurse", "Physician assistant")) %>%
+  select(not_involved___1) %>%
+  raw_to_label_header() %>%
+  check_to_binary() %>%
+  tbl_summary()
+```
+
+
+# Which of the following would you be interested in learning more about? Select all that apply
+* Subset to PCC Physician or APP
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  select(starts_with("interest_learning_pcc")) %>%
+  mutate(across(everything(), ~ifelse(.x == "Checked", 1, 0))) %>%
+  tbl_summary(
+    label = list(
+      interest_learning_pcc___1 ~ "How to prescribe/appropriate medications for Long COVID symptoms",
+      interest_learning_pcc___2 ~ "Therapeutic alternatives",
+      interest_learning_pcc___3 ~ "How to organize workflows to accommodate Long COVID patients",
+      interest_learning_pcc___4 ~ "Options for how to organize Long COVID management in a busy practice",
+      interest_learning_pcc___5 ~ "Recommendations around specific treatment options, as well as which ones work and do not work",
+      interest_learning_pcc___6 ~ "	Helping patients who are struggling with ongoing symptoms",
+      interest_learning_pcc___7 ~ "Resources to refer patients to for symptom treatment and management",
+      interest_learning_pcc___8 ~ "	Apps, tools and other materials to use with patients with Long COVID",
+      interest_learning_pcc___9 ~ "	How to bill for/get paid for Long COVID visits",
+      interest_learning_pcc___10 ~ "How to organize and track Long COVID symptoms with patients over time in the EMR",
+      interest_learning_pcc___11 ~ "Other",
+      interest_learning_pcc_no___1 ~ "I am not interested in any of these options listed above"
+    )
+  )
+```
+
+# In which of the following ways would you like to learn? Rank each item in order of your preference, with number 1 as the most preferred way to learn, to number 8 as the least preferred way to learn.
+* Subset to PCC Physician or APP
+```{r}
+#| eval: false
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  select(elearning_module_pcc:uptodate_pcc) %>%
+  tbl_summary()
+```
+
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  select(elearning_module_pcc:uptodate_pcc) %>%
+  mutate(referral_system_pcc = as.character(referral_system_pcc)) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  raw_to_label_header() %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(
+    "1 - Most preferred",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8 - Least preferred",
+    "Unknown"
+  )))) %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+
+### Numeric tabulation of preferred ways to learn
+* Lower = more preferred
+* Subset to PCC Physician or APP
+```{r}
+# data numeric needs to be reversed scored for these items
+ids <- data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  pull(record_id)
+
+
+data_numeric %>%
+  filter(record_id %in% ids) %>%
+  select(elearning_module_pcc:uptodate_pcc) %>%
+  mutate(across(everything(), ~ (.x - 9) * -1)) %>%
+  raw_to_label_header() %>%
+  tbl_summary(
+    type = everything() ~ "continuous",
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})"),
+    missing = "no"
+  )
+```
+
+
+## I would not like to learn in any of these ways
+```{r}
+data %>%
+  filter(
+    practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)") ) %>%
+  select(not_like_to_learn_pcc___1) %>%
+  check_to_binary() %>%
+  tbl_summary()
+```
+
+# Practice Culture
+* For each of the following questions, please indicate your level of agreement or disagreement with each statement as it applies to this [pcc_or_mdc] overall, not just for Long COVID care. For each item, select one item on the scale ranging from strongly disagree to strongly agree. 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
+
+```{r}
+# Does not score records with missing values in a subscale basis
+pc_scores <- data_numeric %>%
+  select(record_id, after_change:environment) %>%
+  score_pc_scale(., "record_id")
+```
+
+```{r}
+# Merge the scored practice culture values with the main data frame
+data %<>%
+  left_join(., pc_scores, by = "record_id")
+```
+
+## Numeric scores
+```{r}
+data %>%
+  select(pc_imp_subscore:CultureAvg, pcc_or_mdc) %>%
+  tbl_summary(by = pcc_or_mdc,
+    type = everything() ~ "continuous",
+    statistic = all_continuous() ~ c("{mean} ({sd}); {median} ({p25}, {p75})")
+  ) %>%
+  add_overall()#%>%
+  # add_p()
+
+# When comparing across both MDC and PCC clinics, none of the
+# subscales are different suggesting that the practice cultures
+# don't differ, unlike implementation climate.
+```
+
+## Overall frequencies
+```{r}
+data %>%
+  select(after_change:environment) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## PCC frequencies
+```{r}
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(after_change:environment) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## MDC frequencies
+```{r}
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(after_change:environment) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+# Please answer the following questions regarding patients with Long COVID symptoms (choose one number for each item) 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
+```{r}
+#| eval: false
+# Check how many have a missing value if scoring as a sum divided by 10
+# Reverse score items
+data_numeric %>%
+  select(prefer_not:waste_dollars) %>%
+  mutate(across(c(prefer_not, irritate, particularly_difficult, little_help, waste_dollars), ~ (.x - 6) * -1)) %>%
+  mutate(stigma = rowSums(.) / 10) %>%
+  select(stigma) %>%
+  filter(is.na(stigma)) %>%
+  nrow()
+
+
+# How many missing values per person
+# Of the 5, 4 have 1 missing value, and 1 has 9 missing values
+data_numeric %>%
+  select(prefer_not:waste_dollars) %>%
+  rowwise() %>%
+  mutate(n_missing = sum(is.na(c_across(everything())))) %>%
+  ungroup() %>%
+  pull(n_missing) %>%
+  table()  
+```
+
+```{r}
+#| eval: false
+# Version 1: Use only complete cases to calculate the stigma score
+stigma_scores <- data_numeric %>%
+    select(prefer_not:waste_dollars) %>%
+    mutate(across(c(prefer_not, irritate, particularly_difficult, little_help, waste_dollars), ~ (.x - 6) * -1)) %>%
+    mutate(stigma = rowMeans(.)) %>%
+    select(stigma)
+```
+
+```{r}
+#| eval: true
+# Version 2: Use the number of non-missing items as the denominator for those 
+# with one missing item, and do not calculate a score for the participant with
+# 9 missing items.
+stigma_scores <- data_numeric %>%
+    select(prefer_not:waste_dollars) %>%
+    mutate(across(c(prefer_not, irritate, particularly_difficult, little_help, waste_dollars), ~ (.x - 6) * -1)) %>%
+    mutate(stigma = rowMeans(., na.rm = TRUE)) %>%
+    rowwise() %>%
+    mutate(n_missing = sum(is.na(c_across(everything())))) %>%
+    ungroup() %>%
+    mutate(stigma = ifelse(n_missing > 1, NA, stigma)) %>%
+    select(stigma)
+```
+
+```{r}
+data %<>% 
+  bind_cols(., stigma_scores)
+```
+
+```{r}
+data %>%
+  select(stigma, pcc_or_mdc) %>%
+  tbl_summary(
+    by = pcc_or_mdc,
+    statistic = all_continuous() ~ "{mean} ({sd}); {median} ({p25}, {p75})") %>%
+  add_overall() #%>%
+  # add_p()
+
+# comparison between MDC and PCC indicates that the two clinic types do not differ.
+```
+
+## Overall
+```{r}
+data %>%
+  select(prefer_not:waste_dollars) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+
+### Table of demographics from those that have a stigma score at or below the 10th percentile
+```{r}
+data %<>% mutate(burnout_situation = factor(burnout_situation, levels = c(
+    "I enjoy my work. I have no symptoms of burnout.",
+    "Occasionally I am under stress, and I don't always have as much energy as I once did, but I don't feel burned out.",
+    "I am definitely burning out and have one or more symptoms of burnout, such as physical and emotional exhaustion.",
+    "The symptoms of burnout that I'm experiencing won't go away. I think about frustrations at work a lot.",
+    "I feel completely burned out and often wonder if I can go on. I am at the point where I may need some changes or may need to seek some sort of help.",
+    "Prefer not to answer",
+    "Unknown"
+  )))
+```
+
+```{r}
+# Calcultate the deciles to get the bottom 10%
+# * the 10th percentile is 3.18
+quantiles <- quantile(data$stigma, probs = seq(0, 1, by = 0.1), na.rm = TRUE)
+
+# Get the bottom 10 % of the scaled scores and get the demographics for those
+data <- data %>%
+  mutate(stigma_10th = ifelse(stigma <= 3.18, 1, 0))
+```
+
+```{r}
+data %>%
+  filter(stigma_10th == 1) %>%
+  select(pcc_or_mdc, practice_name, practice_role_pcc, practice_role_mdc, other_practice_role_mdc,
+    gender, age_range, personal_covid, experience_cat, agree_statement_pcc, burnout_situation, rewarding, satisfied) %>%
+  mutate(across(rewarding:satisfied, ~ case_when(
+    .x == "A (4)" ~ "Agree",
+    .x == "D (2)" ~ "Disagree",
+    .x == "N (3)" ~ "Neutral",
+    .x == "SA (5)" ~ "Strongly Agree",
+    .x == "SD (1)" ~ "Strong Disagree"))
+  ) %>%
+  mutate(across(rewarding:satisfied, ~ factor(.x, levels = c( "Disagree", "Neutral", "Agree", "Strongly Agree")))) %>%
+  mutate(agree_statement_pcc = ifelse(agree_statement_pcc == 4, "4 - agree", ifelse(agree_statement_pcc == 3, "3 - neutral", agree_statement_pcc))) %>%
+  tbl_summary()
+```
+
+### Table of demographics from those that provided a negative extreme response to the stigma items
+```{r}
+# Create an indicator of those that answered an extreme for a negatively valenced questions
+stigma_negative_extreme <- data_numeric %>%
+    select(prefer_not:waste_dollars) %>%
+    # Deal with NAs, set to 0 so they don't interfere with the 
+    # ifelse logic below.
+    mutate(across(everything(), ~ ifelse(is.na(.x), 0, .x))) %>%
+    mutate(
+      stigma_negative_extreme = ifelse(
+        prefer_not == 5 |
+        irritate == 5 |
+        extra_time == 1 |
+        particularly_difficult == 5 |
+        satisfying == 1 |
+        compassionate == 1 |
+        feel_better == 1 |
+        little_help == 5 |
+        insurance_should == 1 |
+        waste_dollars == 5, 1, 0)) %>%
+    select(stigma_negative_extreme)
+```
+
+```{r}
+data %<>% 
+  bind_cols(., stigma_negative_extreme)
+```
+
+```{r}
+data %>%
+  filter(stigma_negative_extreme == 1) %>%
+  select(pcc_or_mdc, practice_name, practice_role_pcc, practice_role_mdc,
+    gender, age_range, personal_covid, experience_cat, agree_statement_pcc, burnout_situation, rewarding, satisfied) %>%
+  mutate(across(rewarding:satisfied, ~ case_when(
+  .x == "A (4)" ~ "Agree",
+  .x == "D (2)" ~ "Disagree",
+  .x == "N (3)" ~ "Neutral",
+  .x == "SA (5)" ~ "Strongly Agree",
+  .x == "SD (1)" ~ "Strong Disagree"))
+) %>%
+mutate(across(rewarding:satisfied, ~ factor(.x, levels = c( "Disagree", "Neutral", "Agree", "Strongly Agree")))) %>%
+    mutate(agree_statement_pcc = ifelse(agree_statement_pcc == 4, "4 - agree", ifelse(agree_statement_pcc == 3, "3 - neutral", agree_statement_pcc))) %>%
+  tbl_summary()
+```
+
+### Table of stigma responses by burnout
+Using your own definition of "burnout," please indicate which statement best describes your situation working at this [pcc_or_mdc] overall, not just for Long COVID care.
+```{r}
+data %>%
+  select(prefer_not:waste_dollars, burnout_situation) %>%
+  tbl_strata(
+    strata = burnout_situation,
+    .tbl_fun =
+      ~ .x %>% 
+      mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+      mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+      raw_to_label_header() %>%
+      tbl_likert() %>%
+      modify_column_indent(columns = label),
+    .combine_with = "tbl_stack",
+    .header = "**{strata}**, N = {n}"
+  )
+```
+
+### Table of stigma responses by work satisfaction 1 (rewarding)
+I find my current work personally rewarding. 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
+```{r}
+data %>%
+  select(prefer_not:waste_dollars, rewarding) %>%
+  mutate(rewarding = case_when(
+    rewarding == "A (4)" ~ "Agree",
+    rewarding == "D (2)" ~ "Disagree",
+    rewarding == "N (3)" ~ "Neutral",
+    rewarding == "SA (5)" ~ "Strongly Agree",
+    rewarding == "SD (1)" ~ "Strong Disagree")
+  ) %>%
+  mutate(rewarding = factor(rewarding, levels = c( "Disagree", "Neutral", "Agree", "Strongly Agree"))) %>%
+  tbl_strata(
+    strata = rewarding,
+    .tbl_fun =
+      ~ .x %>% 
+      mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+      mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+      raw_to_label_header() %>%
+      tbl_likert() %>%
+      modify_column_indent(columns = label),
+    .combine_with = "tbl_stack",
+    .header = "**{strata}**, N = {n}"
+  )
+```
+
+### Table of stigma responses by work satisfaction 2 (satisfied)
+Overall, I am satisfied in my current practice. 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
+```{r}
+data %>%
+  select(prefer_not:waste_dollars, satisfied) %>%
+  mutate(satisfied = case_when(
+    satisfied == "A (4)" ~ "Agree",
+    satisfied == "D (2)" ~ "Disagree",
+    satisfied == "N (3)" ~ "Neutral",
+    satisfied == "SA (5)" ~ "Strongly Agree",
+    satisfied == "SD (1)" ~ "Strong Disagree")
+  ) %>%
+  mutate(satisfied = factor(satisfied, levels = c( "Disagree", "Neutral", "Agree", "Strongly Agree"))) %>%
+  tbl_strata(
+    strata = satisfied,
+    .tbl_fun =
+      ~ .x %>% 
+      mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+      mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+      raw_to_label_header() %>%
+      tbl_likert() %>%
+      modify_column_indent(columns = label),
+    .combine_with = "tbl_stack",
+    .header = "**{strata}**, N = {n}"
+  )
+```
+
+## PCC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(prefer_not:waste_dollars) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+# Get the denominator of the pcc group only to calculate percentages
+pcc_denom <- data %>%  
+  filter(pcc_or_mdc == "PCC") %>%
+  nrow()
+
+mdc_denom <- data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  nrow()
+
+
+# Create a vector of the postively valenced statements to categorize
+valence_pos <- c(
+  "I can usually find something that helps patients like this feel better.",
+  "I enjoy giving extra time to patients like this.",
+  "I feel especially compassionate toward patients like this",
+  "Insurance plans should cover patients like this to the same degree that they cover patients with other conditions.",
+  "Working with patients like this is satisfying."
+)
+
+# Create a separate data frames with collapsed responses and statements categorized by valence
+x <- list("PCC", "MDC")
+y <- list(pcc_denom, mdc_denom)
+
+
+stigma <- 
+  purrr::map2(x, y,
+    ~ data %>%
+        filter(pcc_or_mdc == .x) %>%
+        select(prefer_not:waste_dollars) %>%
+        mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+        raw_to_label_header() %>%
+        pivot_longer(cols = everything(), values_to = "response", names_to = "question") %>%
+        mutate(response = ifelse(response %in% c("SD (1)", "D (2)"), "Disagree",
+              ifelse(response %in% c("A (4)", "SA (5)"), "Agree", 
+              ifelse(response %in% c("N (3)"), "Neutral", response)))) %>%
+        group_by(question, response) %>%
+        summarise(count = n(), .groups = "drop") %>%
+        mutate(percent =( count / .y )* 100) %>%
+        mutate(valence = ifelse(question %in% valence_pos, "positive", "negative")) %>%
+        mutate(response = factor(response, levels = rev(c("Agree", "Neutral", "Disagree", "Unknown"))))
+  )
+
+pcc_df <- stigma[[1]]
+
+mdc_df <- stigma[[2]]
+```
+
+```{r}
+#| eval: false
+
+# Map function to generate two separate plots, one for positive and one for negative valence
+pcc_figs <- 
+  c("positive", "negative") %>%
+  purrr::map(.,
+    ~ pcc_df %>%
+    filter(!response %in% c("Unknown"),
+    valence == .x) %>%
+    ggplot(aes(x = question, y = percent, fill = response)) +
+    geom_col() +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 40)) +
+    labs(x = "Statement", y = "Percent", fill = "Response") +
+    scale_y_continuous(labels = function(x) scales::percent(x, scale = 1)) +
+    coord_flip() +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+  )
+```
+
+```{r}
+# Define a plot generating function so that one function makes the 4 desired
+# plots for the stigma questions.
+
+make_stigma_plot <- function(df) {
+  df %>%
+    ggplot(aes(x = question, y = percent, fill = response)) +
+    geom_col(position = position_dodge2()) +
+    geom_text(
+      aes(label = scales::percent(percent, scale = 1, accuracy = 1)),
+      position = position_dodge2(width = 0.9),
+      hjust = -0.1,
+      size = 3) +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 40)) +
+    scale_y_continuous(labels = function(x) scales::percent(x, scale = 1), limits = c(0, 100)) +
+    coord_flip() +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(x = "Statement", y = "Percent", fill = "Response")
+}
+```
+
+```{r}
+pcc_figs <- c("positive", "negative") %>%
+  purrr::map(.,
+    ~ pcc_df %>%
+    filter(!response %in% c("Unknown"),
+    valence == .x) %>%
+    make_stigma_plot()
+  )
+```
+
+### Positive valence statements
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+pcc_figs[[1]]
+```
+
+### Negative valence statements
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+pcc_figs[[2]]
+```
+
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+#| eval: false
+# First version of stacked bar chart
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(prefer_not:waste_dollars) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+  raw_to_label_header() %>%
+  pivot_longer(cols = everything(), values_to = "response", names_to = "question") %>%
+  ggplot(aes(x = question, fill = response)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 40)) +
+  labs(x = "Statement", y = "Percent", fill = "Response Level") +
+  coord_flip() +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(prefer_not:waste_dollars) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+```{r}
+# Map function to generate two separate plots, one for positive and one for negative valence
+mdc_figs <- 
+  c("positive", "negative") %>%
+  purrr::map(.,
+    ~ mdc_df %>%
+    filter(!response %in% c("Unknown"),
+    valence == .x) %>%
+    make_stigma_plot()
+  )
+```
+
+### Positive valence statements
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+mdc_figs[[1]]
+```
+
+### Negative valence statements
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+mdc_figs[[2]]
+```
+
+```{r, fig.height = 4.2, fig.width=6.5, fig.dpi = 600}
+#| eval: false
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(prefer_not:waste_dollars) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)" ,"Unknown")))) %>%
+  raw_to_label_header() %>%
+  pivot_longer(cols = everything(), values_to = "response", names_to = "question") %>%
+  ggplot(aes(x = question, fill = response)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 40)) +
+  labs(x = "Statement", y = "Percent", fill = "Response Level") +
+  coord_flip() +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Using your own definition of "burnout," please indicate which statement best describes your situation working at this [pcc_or_mdc] overall, not just for Long COVID care. Check one box:
+```{r}
+data %>%
+  select(burnout_situation, pcc_or_mdc) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(by = pcc_or_mdc) %>%
+  add_overall()
+```
+
+# Please answer these questions about your work satisfaction. 1 = strongly disagree (SD), 2 = disagree (D), 3 = neither agree nor disagree (N), 4 = agree (A), 5 = strongly agree (SA)
+## Overall
+```{r}
+data %>%
+  select(rewarding, satisfied) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## PCC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "PCC") %>%
+  select(rewarding, satisfied) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unknown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
+
+## MDC
+```{r}
+data %>%
+  filter(pcc_or_mdc == "MDC") %>%
+  select(rewarding, satisfied) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c("SD (1)", "D (2)", "N (3)", "A (4)", "SA (5)", "Unkown")))) %>%
+  raw_to_label_header() %>%
+  tbl_likert() %>%
+  add_n()
+```
