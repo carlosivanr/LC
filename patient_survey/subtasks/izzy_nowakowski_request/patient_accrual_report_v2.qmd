@@ -1,0 +1,584 @@
+---
+title: "Patient Survey Accrual Report Version 2"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format: 
+  docx:
+    toc: true
+    embed-resources: true
+    reference-doc: "D:/custom-reference-doc.docx"
+
+execute: 
+  echo: false
+---
+
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz, Dept. of Family Medicine
+
+# Long COVID - Patient Accrual Report
+
+# This file is designed to generate a report indicating which patients have 
+# completed their surveys in the AHRQ Long COVID project.
+```
+
+```{r, message=FALSE, warning=FALSE}
+#| echo: false
+library(magrittr, include = "%<>%")
+library(tidyverse)
+library(gtsummary)
+library(dfmtbx)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Loads pasc severity data and loads functions for displaying the tiles along 
+# with preparing all data.
+source("d:/long_covid/scripts/functions/prep_redcap_data.R")
+```
+
+```{r}
+# Filter data to the end of August
+ids_to_filter <- data %>% 
+  mutate(patient_consent_form_timestamp = as.Date(patient_consent_form_timestamp)) %>%
+  filter(patient_consent_form_timestamp < "2026-09-01") %>%
+  pull(record_id)
+
+data %<>%
+  filter(record_id %in% ids_to_filter)
+```
+
+```{r}
+#  Create a dataframe with binary variables to tabulate the number of screened, 
+# enrolled, and consented patients.
+tab_data <- data %>%
+  select(
+    record_id, enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, participatingclinic,
+    pcc_or_mdc_name) %>%
+  group_by(record_id) %>%
+  fill(
+    enrollstatus, patient_consent_form_complete, healthrelated_social_needs_complete, 
+    participatingclinic, pcc_or_mdc_name,  
+    .direction = "updown") %>%
+  slice_head() %>%
+  ungroup() %>%
+  # Convert missing values in enrollstatus to Unknown/ could be not yet screened or contacted but no response
+  mutate(
+    across(healthrelated_social_needs_complete, ~ ifelse(is.na(.x), "Unknown", .x))) %>%
+  mutate(across(enrollstatus, ~ ifelse(is.na(.x), "TBD", .x))) %>%
+  mutate(across(patient_consent_form_complete, ~ ifelse(is.na(.x), "Incomplete", .x)))
+```
+
+
+# Screened and consented patients
+- Total unique patients: Total number of unique record ids excluding test and duplicated records found in RedCap.
+```{r}
+tab_data %>%
+  select(-record_id, -healthrelated_social_needs_complete,-participatingclinic) %>%
+  select(enrollstatus) %>% tbl_summary()
+  tbl_summary(
+    label = list(
+      enrollstatus ~ "RedCap field: enrollstatus",
+      patient_consent_form_complete ~ "RedCap field: patient consent form complete"
+      )
+  ) %>%
+  modify_header(label = "**Total unique patients**")
+```
+
+```{r}
+#| eval: false
+# Filter the rows to those that are consented and tabulate sex and race
+data %>%
+  filter(!is.na(consent_name)) %>%
+  select(record_id, race, patient_gender) %>%
+  mutate(patient_sex = ifelse(!patient_gender %in% c("Female", "Male"), "Other", patient_gender)) %>%
+  rename(patient_race = race) %>%
+  mutate(patient_race = ifelse(patient_race == "Prefer not to answer", "Other", patient_race)) %>%
+  select(-record_id, -patient_gender) %>%
+  tbl_summary() %>%
+  as_tibble() %>%
+  write_csv("D:\\long_covid\\patient_survey_accrual\\patient_sex_race.csv")
+
+
+View(
+  data %>%
+  filter(!is.na(consent_name)) %>%
+  select(record_id, race, patient_gender) %>%
+  mutate(patient_sex = ifelse(!patient_gender %in% c("Female", "Male"), "Other", patient_gender)) %>%
+  rename(patient_race = race) %>%
+  mutate(patient_race = ifelse(patient_race == "Prefer not to answer", "Other", patient_race)) %>%
+  select(-record_id, -patient_gender) %>%
+  tbl_summary(by = patient_sex) %>%
+  as_tibble())
+```
+
+# Consented patients by Site Type and Site Name
+```{r}
+# Denominator of those that have consented
+data %>%
+  group_by(record_id) %>%
+  slice_head() %>%
+  ungroup() %>%
+  filter(record_id %in% (tab_data %>% filter(patient_consent_form_complete == 1 | patient_consent_form_complete == "Complete") %>% pull(record_id))) %>%
+  select(site_type, site_name) %>%
+  tbl_summary(
+    label = list(
+      site_type ~ "Site Type",
+      site_name ~ "Site Name")
+  )
+```
+
+```{r}
+#| eval: false
+# This is the second table that I think Isabella and Marissa were asking for on 05/05/2026
+# Sent out 5/18/2026, need to confirm
+tab_data %>%
+  select(-healthrelated_social_needs_complete) %>%
+  left_join(
+    data %>% 
+      filter(record_id %in% tab_data$record_id) %>%
+      group_by(record_id) %>%
+      slice_head() %>%
+      ungroup() %>%
+      select(record_id, site_name), by = "record_id") %>%
+  select(-record_id, -patient_consent_form_complete) %>%
+  tbl_summary(
+    by = enrollstatus,
+  ) %>%
+  add_overall()
+```
+
+# Survey completion rates by time point
+- denominator consists of unique records where patient_consent_form is complete 
+```{r}
+# Denominator is a complete pre-enrollment form
+# T1 Numerator is a complete health related social needs form at consent_and_t1_sur_arm_1
+# T2 Numerator is a complete Experiences with care at t2_survey_arm_1
+# T3 Numerator is a complete Experiences with care at t3_survey_arm_1
+# T4 Numerator is a complete Experiences with care at t4_survey_arm_1
+# T5 Numerator is a complete health related social needs form at t5_survey_arm_1
+```
+
+```{r}
+# denominator
+# *** patient record_id 41 consented, but patient_enrollment_form_complete not
+# complete at T1
+# The patient consent form complete can be used because there are no values 
+# where patient consent is complete and consent_name is missing
+consented_ids <- 
+  tab_data %>%
+  filter(patient_consent_form_complete == "Complete") %>%
+  pull(record_id)
+
+# Create a table using the record_ids in denominator ids which are the
+# participants that have a complete patient_enrollment_form this will give
+# the proportion of individuals who have consented and submitted a T1 
+# survey out of those recruited from the clinics to undergo screening.
+
+
+# Get the days since T1 for all consented patients
+days_since_t1 <- data %>%
+  filter(record_id %in% consented_ids, redcap_event_name == "consent_and_t1_sur_arm_1") %>%
+  select(record_id, healthrelated_social_needs_timestamp) %>%
+  mutate(mutate(across(healthrelated_social_needs_timestamp, ~ as.Date(.x)))) %>%
+  mutate(days_since_t1 = as.numeric(Sys.Date() - healthrelated_social_needs_timestamp)) %>%
+  select(record_id, days_since_t1)
+ 
+
+# Get the values of those with a missing PASC at T1, since it's the completion 
+# of the PASC that triggers the T2 and subsequent surveys.
+incomplete_t1_pasc <- data %>%
+  filter(redcap_event_name == "consent_and_t1_sur_arm_1", pasc_symptoms_and_followup_questions_complete == "Incomplete") %>%
+  select(record_id, pasc_symptoms_and_followup_questions_complete)
+
+# Merge the days since T1 to all rows by record_id
+data <- data %>%
+  left_join(days_since_t1, by = "record_id")
+
+# Create separate data frames for each time point
+t1_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "consent_and_t1_sur_arm_1") %>%
+    select(record_id, healthrelated_social_needs_complete) %>%
+    rename(t1_status = healthrelated_social_needs_complete)
+    
+
+t2_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "t2_survey_arm_1") %>% 
+    select(record_id, experiences_with_care_complete) %>%
+    rename(t2_status = experiences_with_care_complete)
+
+
+t3_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "t3_survey_arm_1") %>% 
+    select(record_id, experiences_with_care_complete) %>%
+    rename(t3_status = experiences_with_care_complete)
+
+
+t4_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "t4_survey_arm_1") %>% 
+    select(record_id, experiences_with_care_complete) %>%
+    rename(t4_status = experiences_with_care_complete)
+
+t5_rates <- data %>%
+    filter(record_id %in% consented_ids, redcap_event_name == "t5_survey_arm_1") %>%
+    select(record_id, healthrelated_social_needs_complete) %>%
+    rename(t5_status = healthrelated_social_needs_complete)
+
+rates <- 
+  t1_rates %>%
+  left_join(t2_rates, by = "record_id") %>%
+  left_join(t3_rates, by = "record_id") %>%
+  left_join(t4_rates, by = "record_id") %>%
+  left_join(t5_rates, by = "record_id") %>%
+
+  left_join(days_since_t1, by = "record_id") %>%
+  # filter(record_id == 3) %>% # !!! Coment out after troubleshooting
+  mutate(across(t2_status:t5_status, ~ ifelse(record_id %in% incomplete_t1_pasc$record_id, "Incomplete T1 PASC", .x))) %>%
+  
+  # If the value is missing AND the days since t1 is less than 90, then the 
+  # paticipant isn't due for a T2 yet, they haven't been in the study for
+  # long enough
+  mutate(t2_status = ifelse(
+    is.na(t2_status) & days_since_t1 < 90, "Not due for T2", t2_status)) %>%
+
+  # If the value is missing and the days since the T1 is between 90 and 104, 
+  # then the patient is within the time window allowed in RedCap to submit a
+  # survey
+  mutate(t2_status = ifelse(
+      is.na(t2_status) & days_since_t1 >= 90 & days_since_t1 < 104, 
+      "Incomplete (within window)", 
+      t2_status)) %>%
+
+  # If the value is missing OR "Incomplete" AND the days since T1 is then the
+  # patient is outside of the window allowed in RedCap and the value is missing
+  mutate(t2_status = ifelse(
+    (is.na(t2_status) | t2_status == "Incomplete") & days_since_t1 >= 104, 
+    "Incomplete (past window)", 
+    t2_status)) %>%
+
+  # Modify t3 status ----------------------------------------------------------
+  # The same manipulation for t2 are repeated here but with t3
+  mutate(t3_status = ifelse(
+    is.na(t3_status) & days_since_t1 < 180, "Not due for T3", t3_status)) %>%
+
+  mutate(t3_status = ifelse(
+    is.na(t3_status) & days_since_t1 >= 180 & days_since_t1 < 194, 
+    "Incomplete (within window)", 
+    t3_status)) %>%
+
+  mutate(t3_status = ifelse(
+    (is.na(t3_status) | t3_status == "Incomplete") & days_since_t1 >= 194, 
+    "Incomplete (past window)", 
+    t3_status)) %>%
+  
+  # Modify t4 status ----------------------------------------------------------
+  mutate(t4_status = ifelse(
+    is.na(t4_status) & days_since_t1 < 270, "Not due for T4", t4_status)) %>%
+
+  mutate(t4_status = ifelse(
+  is.na(t4_status) & days_since_t1 >= 270 & days_since_t1 < 284, 
+  "Incomplete (within window)", 
+  t4_status)) %>%
+
+  mutate(t4_status = ifelse(
+    (is.na(t4_status) | t4_status == "Incomplete") & days_since_t1 >= 284, 
+    "Incomplete (past window)", 
+    t4_status)) %>%
+
+  # Modify t5 status ----------------------------------------------------------
+  mutate(t5_status = ifelse(
+    is.na(t5_status) & days_since_t1 < 360, "Not due for T5", t5_status)) %>%
+  
+  mutate(t5_status = ifelse(
+    is.na(t5_status) & days_since_t1 >= 360 & days_since_t1 < 374,
+      "Incomplete (within window)",
+      t5_status)) %>%
+
+  mutate(t5_status = ifelse(
+    (is.na(t5_status) | t5_status == "Incomplete") & days_since_t1 >= 374,
+    "Incomplete(past window)",
+    t5_status
+  ))
+```
+
+```{r}
+rates %>%
+  select(-record_id, -days_since_t1) %>%
+  tbl_summary()
+```
+
+```{r}
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# LEFT OFF HERE SOME PATIENTS LIKE RECORD IDS 34 AND 69 END UP WITH NEGATIVE 
+# VALUES WITH THIS CODE THAT IS DESIGNED TO COUNT HOW LONG IT TAKES FROM INVITE
+# TO SURVEY COMPLETION FOR THE POST-T1 SURVEYS.
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+# rates
+
+# Need time timestamps for t2, t3, t4, and t5, when complete
+times <- data %>%
+  # Make t1, t2, t3, t4, and t5 timestamps
+  filter(
+    record_id %in% consented_ids, 
+    !redcap_event_name %in% c("patient_preenrollm_arm_1", "screening_and_enro_arm_1") ) %>%
+  select(record_id, redcap_event_name, all_of(data %>% select(ends_with("timestamp")) %>% names())) %>%
+  mutate(across(patient_consent_form_timestamp:pasc_symptoms_only_t2_t4_timestamp, ~ as.Date(.x))) %>%
+
+# write_csv(times, "./patient_survey/data/long_covid_pt_survey_timestamps_qa.csv")
+
+
+  select(
+    record_id,
+    redcap_event_name,
+    patient_consent_form_timestamp, # *** For ids 55,34,37, 11, and 20, the hrsn timestamp for t1 does not match the consent timestamp. Almost as if the 1st hrsn was left blank and then a subsequent hrsn was filled in.
+    healthrelated_social_needs_timestamp, 
+    experiences_with_care_timestamp) %>%
+  mutate(across(patient_consent_form_timestamp:experiences_with_care_timestamp, ~ as.Date(.x))) %>%
+  mutate(timestamp =
+    coalesce(
+      patient_consent_form_timestamp,
+      healthrelated_social_needs_timestamp, 
+      experiences_with_care_timestamp)) %>%
+  select(-(patient_consent_form_timestamp:experiences_with_care_timestamp)) %>%
+  group_by(record_id) %>%
+  pivot_wider(names_from = "redcap_event_name", values_from = "timestamp") %>%
+  ungroup() %>%
+  mutate(
+    time_to_t2 = t2_survey_arm_1 - consent_and_t1_sur_arm_1
+)
+```
+
+```{r}
+#| eval: false 
+
+# Older version of displaying the data, the problem is that the experience with care complete column
+# is the same name at each T2- T4 timepoint.
+# To get the 
+tab_t1_t2_rates <- 
+  data %>%
+  filter(record_id %in% consented_ids) %>%
+  group_by(record_id) %>%
+  fill(c(
+    healthrelated_social_needs_complete, 
+    healthrelated_social_needs_timestamp,
+    pasc_symptoms_and_followup_questions_complete,
+    experiences_with_care_complete,
+    experiences_with_care_timestamp), 
+    .direction = "updown") %>%
+  mutate(across(c(
+    healthrelated_social_needs_timestamp, 
+    experiences_with_care_timestamp), ~ as.Date(.x))) %>%
+  slice_head() %>%
+  ungroup() %>%
+  mutate(days_since_t1 = 
+    as.numeric(Sys.Date() - healthrelated_social_needs_timestamp)) %>%
+  select(
+    record_id,
+    healthrelated_social_needs_complete, 
+    pasc_symptoms_and_followup_questions_complete,
+    experiences_with_care_complete,
+    days_since_t1) %>%
+  mutate(t2_status = ifelse(
+    is.na(experiences_with_care_complete) & days_since_t1 < 90, 
+    "Not due", 
+    experiences_with_care_complete)) %>%
+  mutate(t2_status = ifelse(
+    is.na(experiences_with_care_complete) & is.na(t2_status) & days_since_t1 >= 90 & days_since_t1 < 135, 
+    "Within window", 
+    t2_status)) %>%
+  mutate(t2_status = ifelse(
+    pasc_symptoms_and_followup_questions_complete == "Incomplete", "Incomplete PASC", t2_status
+  ))
+```
+
+```{r}
+#| eval: false
+# To get the patients that need a nudge for a followup
+tab_t1_t2_rates %>%
+  filter(t2_status == "Incomplete (within window)") %>%
+  select(record_id, experiences_with_care_complete, t2_status)
+```
+
+```{r}
+# There are two patients in tab_t1_t2_rates, record_ids 17 and 41 that have a partial completion of the T1 survey. Not sure if they will receive an invite for T2.
+```
+
+## Survey completion rates by Site Type
+* Those with an Incomplete T1 PASC were not administered subsequent surveys because completion of the T1 triggers subsequent invites
+* Incomplete (past window) indicates a participant that was invited so submit a survey, but did not do so within 14 days of the invite
+* Incomplete (within windows) indicates a participant that was invited to submit a survey, but is still within 14 days of invite and is eligible to submit a survey.
+* T1 = baseline 0d, T2= 90d (3m), T3= 180d (6m), t4 = 270d (9m)
+```{r}
+rates %>%
+  left_join(
+    data %>% filter(record_id %in% rates$record_id) %>% select(site_type, record_id) %>% distinct(),
+    by = "record_id"
+  ) %>%
+  select(t1_status, t2_status, t3_status, t4_status, site_type) %>%
+  tbl_summary(by = site_type)
+```
+
+<!-- # Patient Demographics -->
+```{r}
+# Manually inspect gender_other as free text
+# Manually inspect patient_sexorient_descr as free text
+```
+
+```{r}
+# Make a backup
+data_full <- data
+```
+
+```{r}
+# Patient age gender and sexual orientation
+data <- 
+  data %>%
+  filter(redcap_event_name == "consent_and_t1_sur_arm_1") %>%
+  filter(record_id %in% consented_ids) %>%
+  # mutate(patient_age = sample(18:75, n(), replace = TRUE)) %>% # Fabricate data
+  mutate(age_group = case_when(
+                               patient_age >= 18 & patient_age < 35 ~ "18-34",
+                               patient_age >= 35 & patient_age < 65 ~ "35-64",
+                               patient_age >= 65 ~ "65+",
+                               TRUE ~ NA_character_
+                               ),
+         age_group = factor(age_group, levels = c("18-34", "35-64", "65+"), ordered = TRUE)) #%>%
+ 
+```
+
+# Patient demographics & characteristics
+## Age, gender, sexual orientation
+```{r}
+# Patient age, gender and sexual orientation
+data %>%
+  select(age_group, patient_gender, patient_sexorient) %>%
+  tbl_summary(
+    # statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    label = list(
+      age_group ~ "Age group",
+      patient_gender ~ "Gender",
+      patient_sexorient ~ "Sexual orientation"
+    )
+    )
+```
+
+## Race & ethnicity
+```{r}
+# Patient race and ethnicity
+data %>%
+  select(patient_race___1:patient_race___7, patient_ethn) %>%
+  mutate(across(patient_race___1:patient_race___7, ~ factor(.x, levels = c(0, 1)))) %>%
+  tbl_summary(
+    label = list(
+      "patient_race___1" ~ "African American or Black",
+      "patient_race___2" ~ "American Indian/Alaska Native.",
+      "patient_race___3" ~ "Asian",
+      "patient_race___4" ~ "Native Hawaiian/Other Pacific Islander",
+      "patient_race___5" ~ "White",
+      "patient_race___6" ~ "Other",
+      "patient_race___7" ~ "Prefer not to answer",
+      "patient_ethn" ~ "Hispanic"),
+    value = list(patient_race___1 ~ "1",
+                 patient_race___2 ~ "1",
+                 patient_race___3 ~ "1",
+                 patient_race___4 ~ "1",
+                 patient_race___5 ~ "1",
+                 patient_race___6 ~ "1",
+                 patient_race___7 ~ "1")
+  )
+```
+
+## Patient preferred language
+```{r}
+# Patient preferred language
+data %>%
+  select(patient_pref_lang) %>%
+  tbl_summary(
+    label = list("patient_pref_lang" ~ "Patient preferred lang.")
+  )
+```
+
+## Patient insurance
+```{r}
+# Patient race and ethnicity
+data %>%
+  select(patient_insurance___1:patient_insurance___10) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      "patient_insurance___1" ~ "State market place",
+      "patient_insurance___2" ~ "Employee provided",
+      "patient_insurance___3" ~ "Medicaid",
+      "patient_insurance___4" ~ "Medicare - Original Medicare",
+      "patient_insurance___5" ~ "Medicare - Advantage Plan",
+      "patient_insurance___6" ~ "Worker's Comp",
+      "patient_insurance___7" ~ "Other",
+      "patient_insurance___8" ~ "Self-pay",
+      "patient_insurance___9" ~ "Uninsured",
+      "patient_insurance___10" ~ "Prefer not to answer",
+      "patient_insurance___11" ~ "Medigap",
+      "patient_insurance___12" ~ "Medicare Part D"
+    ),
+    value = everything() ~ "1"
+  )
+```
+
+## Patient education level
+```{r}
+# Patient education level
+data %>%
+  select(patient_school) %>%
+  tbl_summary(
+    label = list(patient_school ~ "Patient education level")
+  )
+```
+
+## Patient marital status
+```{r}
+data %>%
+  select(patient_marital) %>%
+  tbl_summary(
+    label = list(patient_marital ~ "Patient marital status")
+  )
+```
+
+## Patient employment status pre- long COVID
+```{r}
+data %>%
+  select(patient_employ___1:patient_employ___7) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      patient_employ___1 ~ "Employed Full-time",
+      patient_employ___2 ~ "Employed Part-time",
+      patient_employ___3 ~ "Unemployed",
+      patient_employ___4 ~ "Disabled",
+      patient_employ___5 ~ "Retired",
+      patient_employ___6 ~ "Student",
+      patient_employ___7 ~ "Other"
+    ),
+    value = everything() ~ "1"
+  )
+```
+
+## Patient employment status current
+```{r}
+data %>%
+  # mutate(across(patient_employ_2___1:patient_employ_2___7, ~ sample(0:1, n(), replace = TRUE))) %>% # Fabricate data
+  select(patient_employ_2___1:patient_employ_2___7) %>%
+  mutate(across(everything(), ~ factor(.x, levels = c(0,1)))) %>%
+  tbl_summary(
+    label = list(
+      patient_employ_2___1 ~ "Employed Full-time",
+      patient_employ_2___2 ~ "Employed Part-time",
+      patient_employ_2___3 ~ "Unemployed",
+      patient_employ_2___4 ~ "Disabled",
+      patient_employ_2___5 ~ "Retired",
+      patient_employ_2___6 ~ "Student",
+      patient_employ_2___7 ~ "Other"
+      ),
+    value = everything() ~ "1"
+  )
+```

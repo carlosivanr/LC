@@ -9,13 +9,12 @@
 
 # Status: Work in progress
 # Last updated: 07/14/2026
-
 # /////////////////////////////////////////////////////////////////////////////
 
-# library(magrittr, include = "%<>%")
-# library(dfmtbx)
-# library(tidyverse)
-# library(gtsummary)
+library(magrittr, include = "%<>%")
+library(dfmtbx)
+library(tidyverse)
+library(gtsummary)
 
 # Pull report 176060 as labeled data
 # Corresponds to patient_enrollment report in REDCap
@@ -26,19 +25,9 @@ data <- pull_redcap_report(
   "raw", 
   "true")
 
-# T1 Columns with other text
-# These all have at least one response with text, and all show up
-# data$other_service
-# data$conditions_other
-# data$other_med
-
-# T5 Columns that won't download. Columns will not export to .xlsx either
-# May possibly be due to no one having data in there at this point
-# data$conditions_other_t5
-# data$other_med_t5
-# data$other_service_t5
-
-# Capture the column names
+# Capture the column names, to be able to re-order columns after 
+# binding raw and labeled data sets and preserve the order needed
+# to reflect the order of fields presented in RedCap.
 names_data <- names(data)
 
 # Drop the demographic select all that apply questions from data so that
@@ -52,7 +41,7 @@ data %<>%
 )
 
 
-# Pull report 176060 as raw data for the demographic variables only
+# Pull report 176060 as raw (numerical) data for the demographic variables only
 demographics <- 
   pull_redcap_report(Sys.getenv("LC_patient"), "176060", "raw", "raw", "false") %>%
   select(
@@ -73,10 +62,11 @@ data %<>%
 data %<>%
   rename(record_id = promis_record_id)
 
-# Clear workspace variables
+# Clear workspace variables to clearn memory and navigate through objects more
+# easily
 rm(demographics, names_data)
 
-# Create a timepoint variable
+# Create a numerical timepoint variable to aid in filtering rows
 data %<>%
   mutate(
     timepoint = case_match(
@@ -120,7 +110,8 @@ test_ids <-
 # Identify duplicated record_ids as those with "Duplicated record" in the 
 # enrollstatus field
 # Ids 10, 35, 36, 38, flagged as duplicate Ids
-# Id 69 flagged as duplicate (02/23/2026)
+# Id 69 flagged as duplicate (02/23/2026), but then reverted back to a non
+# duplicate 02/26/2026 see comment in othernotes field
 duplicated_ids <- 
   data %>%
     filter(
@@ -136,12 +127,13 @@ data %<>%
   filter(!record_id %in% c(test_ids, duplicated_ids))
 
 # Create an updated enroll status column, this coalesces the not_enrolled_status
-# and then enrollstatus column
+# and then enrollstatus columns
 data %<>%
   mutate(current_enroll_status = coalesce(not_enrolled_status, enrollstatus))
 
 # Check that all current_enroll_status == Enrollment completed also have a time
-# stamp for T1 PASC
+# stamp for T1 PASC, because the T1 PASC is the variable necessary to trigger
+# T2 and subsequent surveys. 
 all_t1_complete <- data %>%
   filter(
     record_id %in% (data %>% filter(current_enroll_status == "Enrollment completed") %>% pull(record_id)),
@@ -150,9 +142,22 @@ all_t1_complete <- data %>%
   table() %>%
   names()
 
-if (all_t1_complete != "Complete"){
-  stop("Check completed status of enrolled and T1 PASC.")
-}
+# Commented here
+# if (all(all_t1_complete == "Complete") == FALSE){
+#   id_to_check <- data %>%
+#   filter(
+#     record_id %in% (data %>% filter(current_enroll_status == "Enrollment completed") %>% pull(record_id)),
+#     timepoint == 1) %>% 
+#   filter(pasc_symptoms_and_followup_questions_complete == "Incomplete") %>%
+#   pull(record_id)
+
+#   stop(
+#     str_c(
+#       "Check T1 PASC of record id(s)", id_to_check, ". Enrollment status may need to be changed.")
+#     )
+# }
+
+# current_enroll_status for ID 125 is wrong.
 
 
 # ----------
@@ -223,16 +228,35 @@ data %<>%
   )
 
 # Capture those that completed the enrollment step and completed a T1 PASC
+# Older algorithm that did not consider the T1 PASC complete
+# enrollment_completed_ids <- data %>%
+#   filter(enrollstatus == "Enrollment completed") %>% 
+#   pull(record_id)
+
 enrollment_completed_ids <- data %>%
-  filter(enrollstatus == "Enrollment completed") %>%
-  pull(record_id)
+  group_by(record_id) %>%
+  filter(
+    any(
+      redcap_event_name == "screening_and_enro_arm_1" &
+        enrollstatus == "Enrollment completed",
+      na.rm = TRUE
+    ) &
+    any(
+      redcap_event_name == "consent_and_t1_sur_arm_1" &
+        patient_consent_form_complete == "Complete",
+      na.rm = TRUE
+    )
+  ) %>%
+  ungroup() %>%
+  pull(record_id) %>%
+  unique()
 
 # ids flagged as loss to follow up
 ltfu_ids <- data %>%
   filter(grepl("ltfu", study_label, ignore.case = TRUE)) %>%
   pull(record_id)
 
-# This should not longer be needed as there is a dedicated lost to follow up  
+# This should no longer be needed as there is a dedicated lost to follow up variable
 # data %<>%
 #   mutate(enrollstatus = ifelse(record_id %in% ltfu_ids, "LTFU", enrollstatus))
 
@@ -318,7 +342,7 @@ data %<>%
 ## Current employment status
 data %<>% 
   mutate(across(patient_employ_2___1:patient_employ_2___7, ~ factor(.x, levels = c(0,1))))
-  
+
 # Patient clinical questions --------------------------------------------------
 # Asked at T1 and T5 only
 # months_symps
@@ -333,7 +357,8 @@ pcq_t1 <- data %>%
 # service for some reason.
 pcq_t5 <- data %>%
   filter(timepoint == 5) %>%
-  select(record_id, timepoint, months_symps_t5:therapies_t5___21)
+  select(record_id, timepoint, months_symps_t5:therapies_t5___21) %>%
+  select(-conditions_other_t5, -other_med_t5)
 
 # Remove the columns that were just copied to re-introduce after data 
 # harmonization
@@ -955,7 +980,7 @@ lou_diffs_tab <- lou_item_level_long %>%
   display_se()
 
 
-View(lou_diffs_tab)
+# View(lou_diffs_tab)
 # -----------------------------------------------------------------------------
 
 
@@ -1118,8 +1143,8 @@ data %>%
   names()
 
 # Order the factors for PCC
-data %>%
-  select(appt_pcc, explain_pcc:courtesy_pcc) %>%
+data %<>%
+  # select(appt_pcc, explain_pcc:courtesy_pcc) %>%
   mutate(
     across(explain_pcc:medinfo_pcc,
     ~ factor(.x, levels = c(
@@ -1133,10 +1158,10 @@ data %>%
   select(ends_with("_mdc")) %>%
   names()
 
-data %>%
-  select(appt_mdc, explain_pcc:courtesy_pcc) %>%
+data %<>%
+  # select(appt_mdc, explain_pcc:courtesy_pcc) %>%
   mutate(
-    across(explain_pcc:medinfo_pcc,
+    across(explain_mdc:medinfo_mdc,
     ~ factor(.x, levels = c(
       "Yes, definitely",
       "Yes, somewhat",

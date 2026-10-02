@@ -46,7 +46,10 @@ email <- outlook$create_email(
     "carlos.i.rodriguez@cuanschutz.edu",
     "ISABELLA.NOWAKOWSKI@CUANSCHUTZ.EDU",
     "SARAH.JOLLEY@CUANSCHUTZ.EDU",
-    "marissa.morales@uchealth.org"
+    "marissa.morales@uchealth.org",
+    "ELIZABETH.K.BELL@CUANSCHUTZ.EDU",
+    "AUGUSTO.BASTERRECHEA@CUANSCHUTZ.EDU",
+    "SADIE.FRITZLER@CUANSCHUTZ.EDU"
     )
 )
 

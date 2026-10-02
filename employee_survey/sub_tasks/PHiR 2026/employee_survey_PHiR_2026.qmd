@@ -1,0 +1,830 @@
+---
+title: "Employee Survey (draft)"
+
+date: "`r format(Sys.Date(), '%m-%d-%Y')`"
+
+format:
+# Out put to Word
+  docx:
+    toc: true
+    embed-resources: true
+    reference-doc: "D:/custom-reference-doc.docx"
+
+knitr:
+  opts_chunk:
+    dpi: 600
+    fig.width: 8
+    fig.height: 5
+    out.width: "100%"
+
+# Out put to html
+  # html:
+    # toc: true
+
+execute: 
+  echo: false
+---
+
+```{r}
+# /////////////////////////////////////////////////////////////////////////////
+# Carlos Rodriguez, PhD. CU Anschutz Dept. of Family Medicine
+# AHRQ Long COVID - employee survey
+# /////////////////////////////////////////////////////////////////////////////
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(magrittr, include = "%<>%")
+library(dfmtbx)
+
+pacman::p_load(
+  tidyverse,
+  gtsummary
+)
+```
+
+```{r, message=FALSE, warning=FALSE}
+data <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "raw", "false")
+data_numeric <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "raw", "raw", "false")
+labels <- pull_redcap_report(Sys.getenv("LC_employee"), "162831", "label", "label", "false")
+```
+
+```{r}
+data %<>%
+  filter(record_id <= 401)
+
+data_numeric %<>% 
+  filter(record_id %in% data$record_id)
+```
+
+```{r}
+# Create a field-name to label-name dictionary given two data frames in the 
+# workspace named labels and data, where data is the report pulled from Redcap
+# in raw format and labels is the same report but with the label format.
+create_name_dict <- function(){
+  # create a dictionary
+  dict <- data.frame( 
+  field_name = names(data), 
+  label = names(labels))
+
+  return(dict)
+}
+```
+
+```{r}
+# Function that converts a raw header to a label header, requires the dict
+# data frame to be present in the workspace
+raw_to_label_header <-  function(df) {
+
+  temp <- df
+
+  current_names <- names(df)
+  
+  new_names <- dict %>% 
+    filter(field_name %in% current_names) %>% 
+    pull(label)
+  
+  names(temp) <- new_names
+
+  return(temp)
+
+}
+```
+
+```{r}
+# Function to convert Unkowns to Missing
+```
+
+```{r}
+# Create the label header dictionary
+dict <- create_name_dict()
+```
+
+```{r}
+# Subset data to PCC only
+data_pcc <- data %>%
+  filter(pcc_or_mdc == "practice")
+
+data_numeric_pcc <- data_numeric %>%
+  filter(pcc_or_mdc == "practice")
+
+labels_pcc <- labels %>%
+  filter("Primary Care Center (practice) or Multi-Disciplinary Center (clinic) employee?" == "practice")
+```
+
+# Consent rate PCC
+- Denominator is the total number of records available in Redcap
+```{r}
+# use the name variable
+data_pcc %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+```
+
+```{r}
+# Use the consent_complete variable
+data_pcc %>%
+  select(employee_consent_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+#| eval: false
+test <- data_pcc %>%
+  select(
+    record_id, consent_name, 
+    employee_consent_complete, employee_survey_t1_complete,
+    employee_compensation_t1_complete, practice_name)
+
+test %>%
+  select(-record_id, -consent_name, -practice_name) %>%
+  tbl_summary()
+
+test %>%
+  filter(!is.na(consent_name)) %>%
+  select(-record_id, -consent_name, -practice_name) %>%
+  tbl_summary()
+
+test %>%
+  select(practice_name) %>%
+  tbl_summary()
+
+test %>%
+  filter(employee_compensation_t1_complete == "Complete") %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+
+```
+
+```{r}
+#| eval: false
+# Read in kristen's file for amc only
+kristens_amc <- read_csv("D:\\long_covid\\employee_survey\\data_qa\\amc_surveys.csv", show_col_types = FALSE)
+
+# Kristen's files shows 33 and 3
+# not sure how x_complete is defined
+kristens_amc %>%
+  select(x_complete) %>%
+  tbl_summary() %>%
+  as_tibble()
+
+# What column maps onto x_complete
+data_pcc %>%
+  filter(practice_name == "AMC WISH Clinic") %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary() %>%
+  as_tibble()
+
+# clinic_names  <- table(data_pcc$practice_name) %>% names()
+
+# for (clin in clinic_names) {
+#   print(clin)
+
+#   tab <- data_pcc %>%
+#   filter(practice_name == clin) %>%
+#   select(employee_survey_t1_complete) %>%
+#   tbl_summary() %>%
+#   as_tibble()
+
+#   print(tab)
+# }
+
+data_pcc %>%
+  select(practice_name, employee_survey_t1_complete) %>%
+  tbl_summary(by = employee_survey_t1_complete) %>%
+  add_overall()
+```
+
+
+```{r}
+# Drop those that have not consented to participate
+# data_pcc %<>%
+#   filter(!is.na(consent_name))
+```
+
+# Completion rate PCC
+* Denominator is the number of people that provided consent
+```{r}
+data_pcc %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+data_pcc %<>%
+  filter(employee_survey_t1_complete == "Complete")
+```
+
+```{r}
+# filter data_numeric in the same way that data_raw is filtered
+data_numeric_pcc %<>%
+  filter(record_id %in% data_pcc$record_id)
+```
+
+<!-- # Consent rate -->
+<!-- - Denominator is the total number of records available in Redcap -->
+```{r}
+#| eval: false
+data %>%
+  mutate(consented = if_else(is.na(consent_name), 0, 1)) %>%
+  select(consented) %>%
+  tbl_summary()
+```
+
+```{r}
+# Drop those that have not consented to participate
+data %<>%
+  filter(!is.na(consent_name))
+```
+
+<!-- # Completion rate -->
+<!-- * Denominator is the number of people that provided consent -->
+```{r}
+#| eval: false
+data %>%
+  select(employee_survey_t1_complete) %>%
+  tbl_summary()
+```
+
+```{r}
+data %<>%
+  filter(employee_survey_t1_complete == "Complete")
+```
+
+```{r}
+# filter data_numeric in the same way that data_raw is filtered
+data_numeric %<>%
+  filter(record_id %in% data$record_id)
+```
+
+```{r}
+# In total, XXX individuals completed the survey (XX% response rate)
+# XX were primary care clinicians and XX were primary care staff members
+# A total of XX different primary care practices were represented
+```
+
+<!-- Data processing -->
+```{r}
+# Create a categorical version of years of experience
+data_pcc %<>%
+  mutate(experience_cat = cut(experience, 
+   breaks =  c(-Inf, 5, 10, Inf),
+   labels = c("<5", "5-10", ">10")))
+
+data_pcc %<>%
+  mutate(experience_cat = factor(experience_cat, levels = c("<5", "5-10", ">10")))
+
+# Create a ordered factor for age_range
+data_pcc %<>%
+  mutate(age_range = factor(age_range, levels = c("Under 30", "30-45", "46-60", "Over 60")))
+
+data_pcc %<>%
+  mutate(practice_role_pcc_2lvl = ifelse(practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)"), "Primary Care Clinician", "Primary Care Staff")) %>%
+  mutate(practice_role_pcc_2lvl = ifelse(is.na(practice_role_pcc), NA, practice_role_pcc_2lvl))
+
+data_pcc %<>%
+  mutate(practice_role_pcc_c = ifelse(practice_role_pcc %in% c("Care manager", "Other (please specify)", "Other patient care (RDN, PharmD)"), "Other", practice_role_pcc))
+```
+
+# Slide 7
+```{r}
+# Role 2-level
+data_pcc %>%
+  select(practice_role_pcc_2lvl) %>%
+  tbl_summary()
+```
+
+## Number of unique practices
+```{r}
+data_pcc %>% 
+  summarise(n_unique_practices = n_distinct(practice_name)) %>%
+  format_gt_tbl()
+```
+
+# Slide 8
+```{r}
+data_pcc %>% 
+  select(gender, age_range, experience_cat, practice_role_pcc_c) %>%
+  mutate(across(everything(), ~ if_else(is.na(.x), "Unknown", .x))) %>%
+  tbl_summary(
+    sort = practice_role_pcc_c ~ "frequency",
+    label = list(
+      gender ~ "Gender",
+      age_range ~ "Age (years)",
+      experience_cat ~ "Experience (years)"
+    ))
+```
+
+# Slide 9
+```{r}
+# [Bar chart showing response frequencies for agree_statement_pcc, overall and disaggregated by clinician vs. staff. Totally disagree/disagree and agree/totally agree can be collapsed into single categories so that there are just three response categories total: disagree; neutral; agree. Data labels inside or on ends of bars.]
+
+data_pcc %<>%
+  # select(agree_statement_pcc) %>%
+  mutate(agree_statement_pcc = 
+    case_match(
+    agree_statement_pcc,
+    c("5 - Totally Agree", "4") ~ "Agree",
+    "3" ~ "Neutral",
+    c("2", "1 - Totally Disagree") ~ "Disagree",
+    .default = "Unknown"))
+
+data_pcc %>%
+  select(agree_statement_pcc, practice_role_pcc_2lvl) %>%
+  tbl_summary(by = practice_role_pcc_2lvl) %>%
+  add_overall()
+
+# Overall
+overall <- data_pcc %>%
+  group_by(agree_statement_pcc) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(Percent = n / nrow(data_pcc) * 100) %>%
+  mutate(
+    agree_statement_pcc = factor(agree_statement_pcc, levels = c("Agree", "Neutral", "Disagree")),
+    type = "Overall") %>%
+ drop_na()
+
+    
+by_role <- data_pcc %>%
+  group_by(agree_statement_pcc, practice_role_pcc_2lvl) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(
+    Percent = ifelse(
+      practice_role_pcc_2lvl == "Primary Care Staff", 
+      (n / nrow(data_pcc %>% filter(practice_role_pcc_2lvl == "Primary Care Staff")) * 100), 
+      (n / nrow(data_pcc %>% filter(practice_role_pcc_2lvl != "Primary Care Staff")) * 100))) %>%
+  mutate(
+    agree_statement_pcc = factor(agree_statement_pcc, levels = c("Agree", "Neutral", "Disagree")),
+    type = practice_role_pcc_2lvl) %>%
+  select(-practice_role_pcc_2lvl) %>%
+  drop_na()
+```
+
+```{r}
+bind_rows(
+  overall, by_role) %>%
+  ggplot(aes(x = type, y = Percent, fill = agree_statement_pcc)) +
+  geom_col(position = position_dodge2(width = 0.9, preserve = "single")) +
+  scale_fill_manual(values = c("#000000", "#CFB87C", "#434343")) +
+  theme_minimal() +
+  geom_text(
+    aes(label = str_c(round(Percent, 0), "%")),
+    position = position_dodge2(width = 0.9, preserve = "single"),
+    vjust = -0.5
+  ) +
+  theme(
+    legend.position = "bottom", 
+    axis.title.x = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.x = element_text(size = 12),    
+    axis.text.y = element_text(size = 12)
+    )
+```
+
+# Slide 10
+```{r}
+# [Bar chart showing response frequencies for help_manage, disaggregated by clinician vs. staff. Keep all five response categories. Data labels inside or on ends of bars.]
+
+data_pcc %>%
+  select(help_manage, practice_role_pcc_2lvl) %>%
+  tbl_summary(by = practice_role_pcc_2lvl) 
+```
+
+```{r}
+data_pcc %>%
+  group_by(help_manage, practice_role_pcc_2lvl) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(
+    help_manage = ifelse(help_manage == "I'm not sure/don't know", "Don't know", help_manage),
+    Percent = ifelse(
+      practice_role_pcc_2lvl == "Primary Care Staff", 
+      (n / nrow(data_pcc %>% filter(practice_role_pcc_2lvl == "Primary Care Staff")) * 100),
+      (n / nrow(data_pcc %>% filter(practice_role_pcc_2lvl != "Primary Care Staff")) * 100))) %>%
+  mutate(help_manage = factor(help_manage, levels = c("Very satisfied", "Somewhat satisfied", "Not satisfied", "Depends on the patient", "Don't know"))) %>%
+  ggplot(aes(x = practice_role_pcc_2lvl, y = Percent, fill = help_manage, color = help_manage)) +
+  geom_col(position = position_dodge2(width = 0.9, preserve = "single")) +
+    geom_text(
+    aes(label = str_c(round(Percent, 0), "%")),
+    position = position_dodge2(width = 0.9, preserve = "single"),
+    vjust = -0.5,
+    color = "black") +
+  scale_fill_manual(values = c("#000000", "#CFB87C", "#434343", "#BCBCBC", "#ffffff")) +
+  scale_color_manual(values = c("#000000", "#CFB87C", "#434343", "#BCBCBC", "#434343")) +
+  ylim(0, 40) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom", 
+    axis.title.x = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    )
+``` 
+
+# Slide 11
+```{r}
+# [Vertical bar chart for starting_treatment_pcc, bars in descending order by frequency, disaggregated by clinician vs. staff (could display on same chart or do two side-by-side, whichever is easier to read/interpret). Remove “Other” response category. Data labels inside or on ends of bars.]
+
+star_tx <- data_pcc %>%
+  select(
+    practice_role_pcc_2lvl,
+    starting_treatment_pcc___1,
+    starting_treatment_pcc___3,
+    starting_treatment_pcc___4,
+    starting_treatment_pcc___6,
+    starting_treatment_pcc___8) %>%
+  mutate(across(starts_with("starting_treatment"), ~ ifelse(.x == "Checked", 1, 0)))
+
+# Generate a table to double check figures
+star_tx %>%
+  tbl_summary( by = practice_role_pcc_2lvl)
+
+star_tx_long <- star_tx %>%
+  select(-practice_role_pcc_2lvl) %>%
+  summarise_all(~sum(.x)) %>%
+  pivot_longer(cols = everything(), values_to = "value", names_to = "name") %>%
+  arrange(desc(value))
+
+star_tx_order <- star_tx_long %>%
+  pull(name)
+
+staff_n <- star_tx %>%
+  filter(practice_role_pcc_2lvl == "Primary Care Staff") %>%
+  nrow()
+
+# Staff
+staff_values <- star_tx %>%
+  filter(practice_role_pcc_2lvl == "Primary Care Staff") %>%
+  select(-practice_role_pcc_2lvl) %>%
+  summarise_all(~sum(.x)) %>%
+  pivot_longer(cols = starts_with("starting"), values_to = "n", names_to = "name") %>%
+  ungroup() %>%
+  mutate(
+    name = factor(name, levels = star_tx_order),
+    Percent = n / staff_n * 100,
+    practice_role_pcc_2lvl = "Primary Care Staff") 
+
+clinician_n <- star_tx %>%
+  filter(practice_role_pcc_2lvl != "Primary Care Staff") %>%
+  nrow()
+
+# Clinician
+clinician_values <- star_tx %>%
+  filter(practice_role_pcc_2lvl != "Primary Care Staff") %>%
+  select(-practice_role_pcc_2lvl) %>%
+  summarise_all(~sum(.x)) %>%
+  pivot_longer(cols = starts_with("starting"), values_to = "n", names_to = "name") %>%
+  ungroup() %>%
+  mutate(
+    name = factor(name, levels = star_tx_order),
+    Percent = n / clinician_n * 100,
+    practice_role_pcc_2lvl = "Primary Care Clinician")
+```
+
+```{r}
+bind_rows(staff_values, clinician_values) %>%
+  ggplot(aes(x = name, y = Percent, fill = practice_role_pcc_2lvl)) +
+  geom_col(position = position_dodge2(width = 0.9, preserve = "single")) +
+  geom_text(
+    aes(label = str_c(round(Percent, 0), "%")),
+    position = position_dodge2(width = 0.9, preserve = "single"),
+    vjust = -0.5
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("#CFB87C", "#434343")) +
+  ylim(0, 90) +
+  scale_x_discrete(
+  labels = c(
+    "starting_treatment_pcc___1" = "Not enough \n time",
+    "starting_treatment_pcc___3" = "Not enough \n knowledge",
+    "starting_treatment_pcc___4" = "Patients won’t be able \n to manage symptoms",
+    "starting_treatment_pcc___6" = "No treatment \n workflows",
+    "starting_treatment_pcc___8" = "No ancillary \n rehab supports")) +
+  theme(
+    legend.position = "bottom", 
+    axis.title.x = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    )
+```
+
+## Horizontal version
+```{r}
+bind_rows(staff_values, clinician_values) %>%
+  ggplot(aes(x = name, y = Percent, fill = practice_role_pcc_2lvl)) +
+  geom_col(position = position_dodge2(width = 0.9, preserve = "single")) +
+  geom_text(
+    aes(label = str_c(round(Percent, 0), "%")),
+    position = position_dodge2(width = 0.9, preserve = "single"),
+    hjust = -0.5
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("#CFB87C", "#434343")) +
+  ylim(0, 95) +
+  scale_x_discrete(
+  labels = c(
+    "starting_treatment_pcc___1" = "Not enough \n time",
+    "starting_treatment_pcc___3" = "Not enough \n knowledge",
+    "starting_treatment_pcc___4" = "Patients won’t be able \n to manage symptoms",
+    "starting_treatment_pcc___6" = "No treatment \n workflows",
+    "starting_treatment_pcc___8" = "No ancillary \n rehab supports")) +
+  theme(
+    legend.position = "bottom", 
+    axis.title.x = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    ) +
+  coord_flip()
+```
+
+# Slide 12
+```{r}
+# [Bar charts for confidence and effective. Combine response values of 1&2 and 4&5 for both items and have response labels not confident/neutral/confident and not effective/neutral/effective. Data labels inside or on ends of bars.]
+
+denom <- data_pcc %>%
+  filter(practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)")) %>% nrow()
+
+con_eff <- data_pcc %>%
+  filter(practice_role_pcc %in% c("Physician", "Advanced practice provider (NP, PA)")) %>%
+  select(confidence, effective) %>%
+  mutate(across(confidence:effective, ~ substr(.x, 1,1))) %>%
+  mutate(confidence = case_match(
+    confidence,
+    c("1", "2") ~ "Not Confident",
+    "3" ~ "Neutral",
+    c("4", "5") ~ "Confident",
+    .default = "Unknown")) %>%
+  mutate(effective = case_match(
+    effective,
+    c("1", "2") ~ "Not Effective",
+    "3" ~ "Neutral",
+    c("4", "5") ~ "Effective",
+    .default = "Unknown"))
+
+con_eff %>% tbl_summary()
+
+con_eff %<>%
+  pivot_longer(cols = everything(), names_to = "item", values_to = "rating") %>%
+  group_by(item, rating) %>%
+  count() %>%
+  ungroup() %>%
+  drop_na() %>%
+  mutate(Percent = (n / denom) * 100)
+```
+
+```{r}
+plt_12a <- con_eff  %>%
+  filter(item == "effective") %>%
+  ggplot(aes(x = rating, y = Percent, fill = rating)) +
+  scale_fill_manual(values = c("#000000", "#CFB87C", "#434343")) +
+  geom_col(width = 0.5, position = "dodge") +
+  geom_text(
+    aes(label = str_c(round(Percent, 0), "%")),
+    position = position_dodge2(width = 0.9, preserve = "single"),
+    vjust = -0.5
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none", axis.title.x = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12)
+    )
+
+# ggsave(
+#   "slide_12a.pdf",
+#   plot = plt_7a,
+#   width = 8,
+#   height = 5,
+#   device = cairo_pdf
+# )
+
+plt_12a
+```
+
+```{r}
+plt_12b <- con_eff  %>%
+  filter(item != "effective", rating != "Unknown") %>%
+  ggplot(aes(x = rating, y = Percent, fill = rating)) +
+  scale_fill_manual(values = c("#000000", "#CFB87C", "#434343")) +
+  geom_col(width = 0.5, position = "dodge") +
+  geom_text(
+    aes(label = str_c(round(Percent, 0), "%")),
+    position = position_dodge2(width = 0.9, preserve = "single"),
+    vjust = -0.5
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none", axis.title.x = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12)
+    )
+
+# ggsave(
+#   "slide_12b.pdf",
+#   plot = plt_7b,
+#   width = 8,
+#   height = 5,
+#   device = cairo_pdf
+# )
+
+plt_12b
+```
+
+
+# Slide 13 (Clinician)
+```{r}
+# [Two separate vertical stacked bar charts for items prefer_not – waste_dollars, one with positive valence items and one with negative valence items. Combine strongly disagree/disagree and strongly agree/agree so that there are just three response labels. Data labels inside stacked bars. Clinician data only.]
+
+lc_pt_items_clin <- data_pcc %>%
+  filter(practice_role_pcc_2lvl == "Primary Care Clinician") %>%
+  select(prefer_not:waste_dollars) %>%
+  mutate(across(prefer_not:waste_dollars, ~ case_match(.x, c("A (4)", "SA (5)") ~ "Agree", c("SD (1)", "D (2)") ~ "Disagree", "N (3)" ~ "Neutral", .default = "Unknown") )) %>%
+  mutate(across(prefer_not:waste_dollars, ~ factor(.x, levels = c("Disagree", "Neutral", "Agree"))))
+
+
+
+lc_pt_items_clin %>% tbl_summary()
+
+neg_val <- c(
+"prefer_not",
+"irritate",
+"particularly_difficult",
+"little_help",
+"waste_dollars"
+)
+
+pos_val <- c(
+"extra_time",
+"satisfying",
+"compassionate",
+"feel_better",
+"insurance_should"
+)
+```
+
+```{r}
+# Negative Valence Clinician
+lc_pt_items_clin %>%
+  select(all_of(neg_val)) %>%
+  pivot_longer(cols = everything(), names_to = "item", values_to = "rating") %>%
+  group_by(item, rating) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(Percent = (n / nrow(lc_pt_items_clin)) * 100) %>%
+  filter(rating != "Unknown") %>%
+  ggplot(aes(x = item, y = Percent, fill = rating)) +
+  geom_col() + # Stacked bar chart
+    geom_text(
+    aes(label = str_c(round(Percent, 0), "%")), 
+    position = position_stack(vjust = 0.5),
+    color = "white") +
+  scale_fill_manual(values = c("#bcbcbc", "#CFB87C", "#000000"), guide = guide_legend(reverse = TRUE)) +
+  scale_x_discrete(
+      labels = c(
+    "irritate" = "Patients like this irritate me.",
+    "little_help" = "There is little I can do to help \n patients like this.",
+    "particularly_difficult" = "Patients like this are particularly \ndifficult for me to work with.",
+    "prefer_not" = "I prefer not to work with \npatients like this.",
+    "waste_dollars" = "Treating patients like this is \na waste of medical dollars.")) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom", 
+    axis.title.y = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12)
+    ) +
+  coord_flip()
+```
+
+```{r}
+# Positive valence clinician
+lc_pt_items_clin %>%
+  select(all_of(pos_val)) %>%
+  pivot_longer(cols = everything(), names_to = "item", values_to = "rating") %>%
+  group_by(item, rating) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(Percent = (n / nrow(lc_pt_items_clin)) * 100) %>%
+  filter(rating != "Unknown") %>%
+  ggplot(aes(x = item, y = Percent, fill = rating)) +
+  geom_col() + # Stacked bar chart
+    geom_text(
+    aes(label = str_c(round(Percent, 0), "%")), 
+    position = position_stack(vjust = 0.5),
+    color = "white") +
+  scale_fill_manual(values = c("#bcbcbc", "#CFB87C", "#000000"), guide = guide_legend(reverse = TRUE)) +
+  scale_x_discrete(
+      labels = c(
+    "satisfying" = "Working with patients like this \nis satisfying.",
+    "insurance_should" = "Insurance plans should cover patients \nlike this to the same degree that they  \ncover patients with other conditions.",
+    "feel_better" = "I can usually find something that helps \npatients like this feel better.",
+    "extra_time" = "I enjoy giving extra time \nto patients like this.",
+    "compassionate" = "I feel especially compassionate \ntoward patients like this")) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom", 
+    axis.title.y = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12)
+    ) +
+  coord_flip()
+```
+
+# Slide 14 (Staff only)
+```{r}
+# [Two separate vertical stacked bar charts for items prefer_not – waste_dollars, one with positive valence items and one with negative valence items. Combine strongly disagree/disagree and strongly agree/agree so that there are just three response labels. Data labels inside stacked bars. Staff data only.]
+```
+
+
+```{r}
+lc_pt_items_staff <- data_pcc %>%
+  filter(practice_role_pcc_2lvl != "Primary Care Clinician") %>%
+  select(prefer_not:waste_dollars) %>%
+  mutate(across(prefer_not:waste_dollars, ~ case_match(.x, c("A (4)", "SA (5)") ~ "Agree", c("SD (1)", "D (2)") ~ "Disagree", "N (3)" ~ "Neutral", .default = "Unknown") )) %>%
+  mutate(across(prefer_not:waste_dollars, ~ factor(.x, levels = c("Disagree", "Neutral", "Agree"))))
+
+
+lc_pt_items_staff %>% tbl_summary()
+```
+
+```{r}
+# Negative Valence staff
+lc_pt_items_staff %>%
+  select(all_of(neg_val)) %>%
+  pivot_longer(cols = everything(), names_to = "item", values_to = "rating") %>%
+  group_by(item, rating) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(Percent = (n / nrow(lc_pt_items_staff)) * 100) %>%
+  filter(rating != "Unknown") %>%
+  ggplot(aes(x = item, y = Percent, fill = rating)) +
+  geom_col() + # Stacked bar chart
+    geom_text(
+  # aes(label = str_c(round(Percent, 0), "%")), # show all of the percentages
+    aes(label = ifelse(Percent > 5 , (str_c(round(Percent, 0), "%")), "")), 
+    position = position_stack(vjust = 0.5),
+    color = "white") +
+  scale_fill_manual(values = c("#bcbcbc", "#CFB87C", "#000000"), guide = guide_legend(reverse = TRUE)) +
+  scale_x_discrete(
+      labels = c(
+    "irritate" = "Patients like this irritate me.",
+    "little_help" = "There is little I can do to help \n patients like this.",
+    "particularly_difficult" = "Patients like this are particularly \ndifficult for me to work with.",
+    "prefer_not" = "I prefer not to work with \npatients like this.",
+    "waste_dollars" = "Treating patients like this is \na waste of medical dollars.")) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom", 
+    axis.title.y = element_blank(), 
+    legend.title = element_blank(),
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12)
+    ) +
+  coord_flip()
+```
+
+```{r}
+# Positive valence staff
+lc_pt_items_staff %>%
+  select(all_of(pos_val)) %>%
+  pivot_longer(cols = everything(), names_to = "item", values_to = "rating") %>%
+  group_by(item, rating) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(Percent = (n / nrow(lc_pt_items_staff)) * 100) %>%
+  filter(rating != "Unknown") %>%
+  ggplot(aes(x = item, y = Percent, fill = rating)) +
+  geom_col() + # Stacked bar chart
+    geom_text(
+    # aes(label = str_c(round(Percent, 0), "%")), # show all of the percentages
+    aes(label = ifelse(Percent > 5 , (str_c(round(Percent, 0), "%")), "")), # omit the small percentages
+    position = position_stack(vjust = 0.5),
+    color = "white") +
+  scale_fill_manual(values = c("#bcbcbc", "#CFB87C", "#000000"), guide = guide_legend(reverse = TRUE)) +
+  scale_x_discrete(
+      labels = c(
+    "satisfying" = "Working with patients like this \nis satisfying.",
+    "insurance_should" = "Insurance plans should cover patients \nlike this to the same degree that they  \ncover patients with other conditions.",
+    "feel_better" = "I can usually find something that helps \npatients like this feel better.",
+    "extra_time" = "I enjoy giving extra time \nto patients like this.",
+    "compassionate" = "I feel especially compassionate \ntoward patients like this")) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom", 
+    axis.title.y = element_blank(),
+    legend.title = element_blank(),
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12)
+    ) +
+  coord_flip()
+```

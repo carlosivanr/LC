@@ -104,6 +104,7 @@ practice_enrollments_counts <- practice_enrollments %>%
   select(-total_enrolled, -year_mon) %>%
   rename(practice_name = site_name)
 
+
 # Merged practice culture and the enrollment values
 merged_df <- left_join(
   practice_culture %>% filter(variable == "CultureAvg"),
@@ -130,8 +131,51 @@ cor.test(
     merged_df$cumulative_enrolled
   )
 
-# index  <- merged_df$cumulative_enrolled > 0
-# cor.test(
-#     merged_df$mean[index],
-#     merged_df$cumulative_enrolled[index]
-#   )
+
+
+practice_culture <- 
+  left_join(
+  practice_culture,
+  practice_enrollments_counts,
+  by = "practice_name") %>%
+  mutate(cumulative_enrolled = ifelse(is.na(cumulative_enrolled), 0, cumulative_enrolled))
+
+
+cor_tests_enrolled <- pc_vars %>%
+  map(., 
+    ~ cor.test(
+      practice_culture %>% filter(variable == .x) %>% pull(cumulative_enrolled),
+      practice_culture %>% filter(variable == .x) %>% pull(mean))
+    )
+
+View(
+  cor_tests_enrolled %>%
+  map_dfr(.f = ~ tibble(
+  r.value = round(.x$estimate, 4),
+  p.value = round(.x$p.value, 4))
+ ) %>%
+mutate(variable = pc_vars) %>%
+select(variable, everything())
+)
+
+
+
+practice_culture %<>%
+  mutate(response_rate = n / invites) 
+
+cor_tests_response_rate <- pc_vars %>%
+  map(., 
+    ~ cor.test(
+      practice_culture %>% filter(variable == .x) %>% pull(response_rate),
+      practice_culture %>% filter(variable == .x) %>% pull(mean))
+    )
+
+View(
+  cor_tests_response_rate %>%
+  map_dfr(.f = ~ tibble(
+  r.value = round(.x$estimate, 4),
+  p.value = round(.x$p.value, 4))
+ ) %>%
+mutate(variable = pc_vars) %>%
+select(variable, everything())
+)
